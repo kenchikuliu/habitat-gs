@@ -400,11 +400,17 @@ def main():
             with open(anno_path, "w") as f:
                 json.dump(annotations, f)
 
-        # Save final annotations.json (main file for VLNActionDataset)
-        final_anno = os.path.join(output_dir, f"annotations{suffix}.json")
-        with open(final_anno, "w") as f:
-            json.dump(annotations, f, indent=2)
-        print(f"\n  Saved {len(annotations)} annotations -> {final_anno}")
+        # Save per-split file as the authoritative copy for this split
+        print(f"\n  Saved {len(annotations)} annotations -> {anno_path}")
+
+        # Mirror the train split to the "main" annotations.json, which is the
+        # file StreamVLN's VLNActionDataset reads for training. Val never
+        # overwrites it (we used to overwrite per split, clobbering train).
+        if split == "train":
+            final_anno = os.path.join(output_dir, f"annotations{suffix}.json")
+            with open(final_anno, "w") as f:
+                json.dump(annotations, f, indent=2)
+            print(f"  Mirrored to training file  -> {final_anno}")
 
     elapsed_total = time.time() - global_t0
     print(f"\nAll done! Total time: {elapsed_total / 60:.1f} min")
