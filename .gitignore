@@ -189,6 +189,9 @@ pre-commit-deps.txt
 /src_python/habitat_sim/_ext
 /tools/qa_scenes/qa_scenes_output/
 
+# navmesh_editor runtime artifacts (generated .splat / .navmesh / proxy .obj / worker logs)
+/navmesh_editor/_tmp/
+
 
 # Local contributor guide draft
 /AGENTS.md

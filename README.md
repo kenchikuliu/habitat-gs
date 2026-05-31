@@ -42,6 +42,8 @@
 
 ## 📢 News
 
+> **[2026-05]** 🎉 Try our [NavMesh editing tool](https://github.com/zju3dv/habitat-gs/tree/main/navmesh_editor)! It closes the loop from a raw 3DGS scene to navigable simulation (**3DGS → NavMesh → simulation**): draw/edit the walkable area on the 3DGS scene in your browser, bake a Habitat NavMesh, and use it for navigation in Habitat-GS.
+
 > **[2026-05]** 🎉 [GS dataset](https://huggingface.co/datasets/RukawaY/gs_scenes) is expanded with 64 [InteriorGS](https://huggingface.co/datasets/spatialverse/InteriorGS) scenes! Now 129 scenes in total!
 
 > **[2026-04]** 🎉 [GS dataset](https://huggingface.co/datasets/RukawaY/gs_scenes) is updated! We provide 65 high-quality GS scenes, as well as episodes and trajectories for training and evaluation!
@@ -160,18 +162,16 @@ For a static GS scene without avatars, you only need:
 
 - a background 3DGS asset (`background.ply`) for far-field content like sky or distant geometry that was separated from the foreground during reconstruction. To render foreground and background together as a single stage, merge the two `.ply` files into one with `tools_gs/merge_background_gs.py`.
 
-If you already have a high-quality NavMesh, you can use it directly. If not, we recommended the following pipeline to generate one from your GS scene:
-
-1. convert the GS scene to collision mesh with [3DGS-to-PC](https://github.com/Lewis-Stuart-11/3DGS-to-PC) or other methods;
-2. generate a Habitat NavMesh from that collision mesh with `tools_gs/generate_navmesh.py`.
-
-Minimal example:
+For NavMesh generation, use our interactive `navmesh_editor` tool: it renders the GS scene in your browser and lets you draw/modify the walkable area, then bakes a Habitat `.navmesh` for simulation.
 
 ```bash
 conda activate habitat-gs
-python tools_gs/generate_navmesh.py \
-  --input /path/to/scene_collision_mesh.ply \
-  --output /path/to/scene.navmesh
+
+python navmesh_editor/server.py --port 8080   # Scene dir by default: data/scene_datasets/gs_scenes (train/ and val/ subfolders).
+# then open http://localhost:8080 
+
+python navmesh_editor/server.py --port 8080 --scene interior_0007_840137        # Open a specific scene
+python navmesh_editor/server.py --port 8080 --gs-dir /path/to/gs_scenes/train   # Open scenes in a directory
 ```
 
 </details>

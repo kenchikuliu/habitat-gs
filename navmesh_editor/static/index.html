@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>navmesh_editor</title>
+<style>
+  :root{--bg:#14161a;--panel:#1d2129;--line:#2c333f;--fg:#d7dbe2;--mut:#8a93a0;
+        --acc:#54b9ff;--good:#39d98a;--warn:#ffb454;--bad:#ff6a6a;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+            font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;}
+  body{display:flex;flex-direction:column;}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:7px 10px;
+       background:var(--panel);border-bottom:1px solid var(--line);flex:none;}
+  #bar2{justify-content:flex-start;}
+  .bar .g{display:flex;gap:6px;align-items:center;}
+  .bar label{color:var(--mut);}
+  select,input[type=number],button{background:#262c36;color:var(--fg);
+       border:1px solid var(--line);border-radius:5px;padding:5px 8px;font-size:13px;}
+  input[type=number]{width:62px;} button{cursor:pointer;}
+  button:hover{border-color:var(--acc);}
+  button.on{background:#1f4f73;border-color:var(--acc);color:#fff;}
+  button.go{background:#1f6b46;border-color:var(--good);}
+  button.primary{background:#1f4f73;border-color:var(--acc);}
+  .sep{width:1px;height:22px;background:var(--line);}
+  .spacer{flex:1 1 auto;}
+  #main{flex:1 1 auto;min-height:0;display:flex;}
+  .pane{position:relative;flex:1;min-width:0;overflow:hidden;}
+  #paneL{border-right:1px solid var(--line);}
+  canvas.view{display:block;width:100%;height:100%;}
+  .tag{position:absolute;top:8px;left:10px;padding:3px 9px;border-radius:5px;
+       background:#000a;color:#b6bdc8;font-size:11px;pointer-events:none;z-index:3;max-width:62%;}
+  .tag.wide{max-width:100vw;}
+  .tag b{color:var(--acc);}
+  #mm{position:absolute;top:8px;right:8px;border:1px solid var(--line);border-radius:6px;
+      background:#0b0d11dd;z-index:4;pointer-events:none;}
+  #rinfo{position:absolute;bottom:8px;right:10px;background:#000a;color:#b6bdc8;font-size:11px;
+         padding:3px 8px;border-radius:5px;z-index:4;pointer-events:none;}
+  #foot{height:36px;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);
+        border-top:1px solid var(--line);font-size:12px;flex:none;}
+  #stats b{color:var(--good);} #hint{color:var(--warn);}
+  #log{color:var(--mut);margin-left:auto;max-width:42%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  #floor,#cam{width:120px;}
+  .err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+       text-align:center;color:var(--bad);background:#0b0d11cc;padding:20px;z-index:5;}
+  #loading{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+           background:#0b0d11ee;color:var(--fg);font-size:18px;z-index:30;}
+</style>
+</head>
+<body>
+<div class="bar" id="bar1">
+  <div class="g"><label>Scene</label><select id="scene"></select><span id="cnt" style="color:var(--mut)"></span></div>
+  <div class="sep"></div>
+  <div class="g"><label title="Height of the floor plane you draw on (also the FP eye reference). Drag the slider or type a value.">Floor height</label>
+    <input type="range" id="floor" step="0.01"/>
+    <input type="number" id="floorNum" step="0.01"/><span style="color:var(--mut)">m</span></div>
+  <div class="sep"></div>
+  <div class="g"><label title="Top-down (right pane) camera height. For an indoor scene set it just below the ceiling so the view shows the floor, not the ceiling. Drag the slider or type a value.">Camera height</label>
+    <input type="range" id="cam" step="0.05"/>
+    <input type="number" id="camNum" step="0.1"/><span style="color:var(--mut)">m</span></div>
+  <div class="sep"></div>
+  <button id="advBtn" title="Optional Recast/agent parameters — good defaults are used, you normally don't need these.">⚙ Advanced</button>
+</div>
+<div class="bar" id="advbar" style="display:none">
+  <span style="color:var(--mut)">Advanced navmesh generation settings:</span>
+  <div class="g">
+    <label title="Agent radius (m): the navmesh edge is eroded inward by this so the agent body never clips walls/holes. Set 0 for a navmesh that matches your drawn polygon exactly (no inward shrink).">radius</label><input type="number" id="radius" value="0.10" step="0.05"/>
+    <label title="Agent height (m): cells with less vertical clearance than this are culled (can't stand there).">height</label><input type="number" id="height" value="1.50" step="0.1"/>
+    <label title="Max climb (m): vertical step the agent can step up (curbs/low ledges); bigger = more connected.">climb</label><input type="number" id="climb" value="0.20" step="0.05"/>
+    <label title="Max slope (deg): surfaces steeper than this are not walkable. Your floor is flat, so this rarely matters.">slope</label><input type="number" id="slope" value="45" step="5"/>
+    <label title="Recast voxel size (m): resolution of the navmesh boundary. Smaller = the navmesh hugs your drawn polygon more tightly (finer), but slower.">cell</label><input type="number" id="cell" value="0.03" step="0.01"/>
+  </div>
+</div>
+<div class="bar" id="bar2">
+  <div class="g">
+    <button id="mDraw" class="on" title="Click to add walkable-area vertices; Enter to finish (key B)">✏️ Draw area</button>
+    <button id="mMove" title="Select / move / insert / delete vertices of the walkable outline (key V)">✍️ Modify</button>
+    <button id="mHole" title="Click to outline an obstacle hole (cut out of walkable area); Enter to finish (key O)">🧱 Obstacle</button>
+    <button id="clear">␥ Clear</button>
+    <button id="undo" title="Undo last edit (Ctrl+Z)">↶ Undo</button>
+    <button id="redo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">↷ Redo</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="g">
+    <button id="hideNav" title="Show/hide the green generated navmesh overlay">Hide navmesh</button>
+    <button id="hideArea" title="Show/hide the blue drawn walkable-area outline">Hide drawn area</button>
+    <button id="save" class="go" title="One click: generate the Habitat navmesh from your drawn walkable area (runs Recast under the hood) and write it to the scene folder. No separate bake step.">💾 Save navmesh</button>
+  </div>
+</div>
+
+<div id="main">
+  <div class="pane" id="paneL">
+    <span class="tag wide">FP view — <b>WASD</b> move · <b>Z/X</b> up/down · <b>arrows</b> turn/look · <b>scroll</b> zoom · <b>right-drag</b> look · <b>left-click</b> edit</span>
+    <canvas id="cvL" class="view"></canvas>
+    <div class="err" id="errL"></div>
+  </div>
+  <div class="pane" id="paneR">
+    <span class="tag">Top-down (local, around you — front &amp; back) — <b>scroll</b> zoom · <b>left-click</b> edit</span>
+    <canvas id="cvR" class="view"></canvas>
+    <canvas id="mm"></canvas>
+    <div id="rinfo"></div>
+    <div class="err" id="errR"></div>
+  </div>
+</div>
+
+<div id="foot"><span id="stats">no navmesh baked</span><span id="hint"></span><span id="log"></span></div>
+<div id="loading"></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+let GS = null;
+try { GS = await import('@mkkellogg/gaussian-splats-3d'); }
+catch(e){ console.error('splat lib failed', e); }
+
+const TOP_FOV = 28;            // base (narrow) FOV from a moderate height ≈ local top-down (splat shader needs perspective)
+const TOP_FOV_MAX = 75;        // indoors: park the camera just below the ceiling and widen FOV up to this instead
+const CEIL_GAP = 0.15;         // how far below the ceiling to park the top-down camera
+const $ = id => document.getElementById(id);
+const log = m => { $("log").textContent = m; };
+const showLoading = n => { const el=$("loading"); el.textContent='Loading '+n+' …'; el.style.display='flex'; };
+const hideLoading = () => { $("loading").style.display='none'; };
+const b64f32 = s => { const b=atob(s),u=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return new Float32Array(u.buffer); };
+
+const S = {
+  scene:null, bounds:null, floorY:0, suggested:null,
+  poly:{ outer:[], holes:[] }, baked:null,
+  mode:'move', openHole:-1, sel:null, drag:null, dragView:null, dragDirty:false,
+  showNav:true, showInput:true, ceilingY:null, camHeight:40,
+  fp:{x:0,y:0,z:0,yaw:0,pitch:0,fov:70}, regionHalf:10, regionHalfEff:10,
+};
+const keys = new Set();
+let hist=[], fut=[];
+
+// ===== two independent views (own renderer/scene/camera/splat-viewer each) =====
+// Two viewers are REQUIRED so each sorts/renders for its OWN camera: mkkellogg's
+// sort drops splats behind the sort camera, so a shared viewer would make the
+// top-down show only what's in front of the FP camera. The splat is downloaded
+// ONCE and shared via an in-memory blob URL (one transfer, two GPU copies).
+function makeView(canvas, kind){
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0e1014);
+  const camera = new THREE.PerspectiveCamera(kind==='fp'?S.fp.fov:TOP_FOV,1,0.02,8000);
+  camera.up.set(0,1,0);
+  const v = {kind,canvas,renderer,scene,camera,viewer:null,
+             input:new THREE.Group(),nav:null,marker:null,mats:[],_look:null};
+  scene.add(v.input);
+  return v;
+}
+const VL = makeView($("cvL"),'fp');
+const VR = makeView($("cvR"),'top');
+const VIEWS = [VL,VR];
+
+async function loadSplats(url){
+  if(!GS){ for(const id of ['errL','errR']){ $(id).style.display='flex';
+      $(id).textContent='3DGS renderer failed to load (no internet for the CDN?). Editing still works.'; }
+    hideLoading(); return; }
+  let src = url;
+  try{ const buf = await (await fetch(url)).arrayBuffer();          // ONE download…
+       src = URL.createObjectURL(new Blob([buf])); }                // …shared via in-memory blob (no more network)
+  catch(e){ console.error('splat fetch failed', e); }
+  const ps=[];
+  for(const v of VIEWS){
+    try{
+      const viewer = new GS.DropInViewer({ gpuAcceleratedSort:false, sharedMemoryForWorkers:false });
+      v.viewer = viewer; v.scene.add(viewer);
+      ps.push(Promise.resolve(viewer.addSplatScene(src, { format: GS.SceneFormat.Splat, showLoadingUI:false, splatAlphaRemovalThreshold:1 }))
+        .then(()=>log('splats loaded ('+v.kind+')')).catch(err=>console.error(err)));
+    }catch(err){ console.error('viewer init',err); }
+  }
+  Promise.all(ps).then(hideLoading, hideLoading);
+}
+
+// ---------------- overlays (fat lines), per view ----------------
+function disposeGroup(g){ g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); g.clear(); }
+function fatLine(v, pts, color, width, closed){
+  const arr=[]; pts.forEach(p=>arr.push(p[0],S.floorY+0.02,p[1]));
+  if(closed && pts.length>=3) arr.push(pts[0][0],S.floorY+0.02,pts[0][1]);
+  const geo=new LineGeometry(); geo.setPositions(arr);
+  const mat=new LineMaterial({color,linewidth:width}); v.mats.push(mat);
+  const ln=new Line2(geo,mat); ln.computeLineDistances(); ln.renderOrder=4; return ln;
+}
+function vertPoints(v, pts, color, size, selIdx){
+  const objs=[];
+  if(pts.length){
+    const g=new THREE.BufferGeometry().setFromPoints(pts.map(p=>new THREE.Vector3(p[0],S.floorY+0.03,p[1])));
+    const pm=new THREE.Points(g,new THREE.PointsMaterial({color,size,sizeAttenuation:false})); pm.renderOrder=5; objs.push(pm);
+    if(selIdx!=null && selIdx>=0 && pts[selIdx]){
+      const sg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(pts[selIdx][0],S.floorY+0.04,pts[selIdx][1])]);
+      const sp=new THREE.Points(sg,new THREE.PointsMaterial({color:0xffe14d,size:size+10,sizeAttenuation:false})); sp.renderOrder=6; objs.push(sp);
+    }
+  }
+  return objs;
+}
+function areaFill(){
+  // Light-blue translucent fill of the walkable area (outer ring minus holes),
+  // mirroring the navmesh's green fill. ShapeGeometry triangulates it (earcut) in the
+  // XY plane; we then lay it flat into the XZ floor plane just under the outline.
+  const outer=S.poly.outer;
+  if(outer.length<3) return null;
+  try{
+    const shape=new THREE.Shape(outer.map(p=>new THREE.Vector2(p[0],p[1])));
+    S.poly.holes.forEach(h=>{ if(h.length>=3) shape.holes.push(new THREE.Path(h.map(p=>new THREE.Vector2(p[0],p[1])))); });
+    const geo=new THREE.ShapeGeometry(shape);
+    geo.rotateX(Math.PI/2); geo.translate(0,S.floorY+0.005,0);   // XY shape -> XZ plane at the floor
+    const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0x54b9ff,transparent:true,
+      opacity:0.22,side:THREE.DoubleSide,depthWrite:false}));
+    m.renderOrder=1; return m;                                   // under the navmesh fill + outline
+  }catch(e){ return null; }                                     // transient self-intersection while drawing
+}
+function rebuildInput(){
+  for(const v of VIEWS){
+    disposeGroup(v.input); v.mats=v.mats.filter(m=>m._nav);
+    const so=S.sel;
+    const fill=areaFill(); if(fill) v.input.add(fill);
+    if(S.poly.outer.length>=2) v.input.add(fatLine(v,S.poly.outer,0x54b9ff,4,true));
+    vertPoints(v,S.poly.outer,0x54b9ff,18,so&&so.ring==='outer'?so.i:null).forEach(o=>v.input.add(o));
+    S.poly.holes.forEach((h,hi)=>{
+      if(h.length>=2) v.input.add(fatLine(v,h,0xff6a6a,4,true));
+      vertPoints(v,h,0xff6a6a,18,so&&so.ring==='hole'&&so.hi===hi?so.i:null).forEach(o=>v.input.add(o));
+    });
+    v.input.visible=S.showInput;
+  }
+  syncMatRes();
+}
+function rebuildNav(){
+  for(const v of VIEWS){
+    if(v.nav){ v.scene.remove(v.nav); disposeGroup(v.nav); v.nav=null; }
+    v.mats=v.mats.filter(m=>!m._nav);
+    if(!S.baked) continue;
+    const grp=new THREE.Group();
+    const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(S.baked.slice(),3));
+    const fill=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0x39d98a,transparent:true,opacity:0.28,side:THREE.DoubleSide,depthWrite:false}));
+    fill.renderOrder=2; grp.add(fill);
+    const wf=new THREE.WireframeGeometry(geo);
+    const sg=new LineSegmentsGeometry(); sg.setPositions(Array.from(wf.attributes.position.array)); wf.dispose();
+    const mat=new LineMaterial({color:0x2fe39a,linewidth:3}); mat._nav=true; v.mats.push(mat);
+    const wire=new LineSegments2(sg,mat); wire.renderOrder=3; grp.add(wire);
+    grp.visible=S.showNav; v.scene.add(grp); v.nav=grp;
+  }
+  syncMatRes();
+}
+function syncMatRes(){ for(const v of VIEWS){ const r=v.canvas.getBoundingClientRect();
+  v.mats.forEach(m=>m.resolution.set(r.width||1,r.height||1)); } }
+function ensureMarker(){ if(VR.marker) return;     // camera marker lives only in the top-down scene
+  const m=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.4,16),new THREE.MeshBasicMaterial({color:0xffe14d}));
+  m.renderOrder=7; VR.scene.add(m); VR.marker=m; }
+
+// ---------------- cameras ----------------
+function fpDir(){ const cy=Math.cos(S.fp.pitch);
+  return new THREE.Vector3(Math.sin(S.fp.yaw)*cy,Math.sin(S.fp.pitch),-Math.cos(S.fp.yaw)*cy); }
+function updateFPCam(){ const c=VL.camera,f=S.fp; c.fov=f.fov; c.position.set(f.x,f.y,f.z);
+  c.up.set(0,1,0); c.lookAt(new THREE.Vector3(f.x,f.y,f.z).add(fpDir())); c.updateProjectionMatrix(); }
+function updateTopCam(){ const c=VR.camera;
+  // Top-down camera centred on YOU, parked at an absolute height S.camHeight (auto on
+  // load: just below the ceiling indoors, high up outdoors; adjustable via the Camera
+  // height control). The FOV is derived so the requested local region (scroll-zoom)
+  // fits from that height, widened up to TOP_FOV_MAX when the camera sits low.
+  const camY=S.camHeight, h=Math.max(0.4,camY-S.floorY);
+  let fov=THREE.MathUtils.clamp(2*Math.atan(S.regionHalf/h)*180/Math.PI,8,TOP_FOV_MAX);
+  const half=h*Math.tan(THREE.MathUtils.degToRad(fov/2));   // region actually shown (after the FOV clamp)
+  S.regionHalfEff=half;
+  c.fov=fov; c.position.set(S.fp.x,camY,S.fp.z); c.up.set(0,0,-1);
+  c.lookAt(S.fp.x,S.floorY,S.fp.z); c.updateProjectionMatrix();
+  if(VR.marker){ VR.marker.position.set(S.fp.x,S.floorY+0.1,S.fp.z);
+    VR.marker.scale.setScalar(Math.max(0.4,half/14));
+    VR.marker.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),
+      new THREE.Vector3(Math.sin(S.fp.yaw),0,-Math.cos(S.fp.yaw))); } }
+
+// ---------------- edit math (per view) ----------------
+const _ray=new THREE.Raycaster();
+const _plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+function rectOf(v){ return v.canvas.getBoundingClientRect(); }
+function screenToFloor(v,e){ const r=rectOf(v); _plane.constant=-S.floorY;
+  const ndc=new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);
+  _ray.setFromCamera(ndc,v.camera); const hit=new THREE.Vector3();
+  return _ray.ray.intersectPlane(_plane,hit)?[hit.x,hit.z]:null; }
+function projectPx(v,x,z){ const r=rectOf(v); const p=new THREE.Vector3(x,S.floorY,z).project(v.camera);
+  if(p.z>1) return null; return [(p.x*0.5+0.5)*r.width,(-p.y*0.5+0.5)*r.height]; }
+function hitVertex(v,e){ const r=rectOf(v); const mx=e.clientX-r.left,my=e.clientY-r.top;
+  const test=(ring,rk,hi)=>{ for(let i=0;i<ring.length;i++){ const pp=projectPx(v,ring[i][0],ring[i][1]);
+    if(pp&&(pp[0]-mx)**2+(pp[1]-my)**2<196) return {ring:rk,hi,i}; } return null; };
+  let h=test(S.poly.outer,'outer',-1); if(h)return h;
+  for(let k=0;k<S.poly.holes.length;k++){ h=test(S.poly.holes[k],'hole',k); if(h)return h; } return null; }
+function ringOf(sel){ return sel.ring==='outer'?S.poly.outer:S.poly.holes[sel.hi]; }
+function nearestEdge(v,e){ const r=rectOf(v); const mx=e.clientX-r.left,my=e.clientY-r.top; let best=null,bd=100;
+  const scan=(ring,rk,hi)=>{ for(let i=0;i<ring.length;i++){ const a=ring[i],b=ring[(i+1)%ring.length];
+    const pa=projectPx(v,a[0],a[1]),pb=projectPx(v,b[0],b[1]); if(!pa||!pb)continue;
+    const dx=pb[0]-pa[0],dy=pb[1]-pa[1],L=dx*dx+dy*dy||1; let t=((mx-pa[0])*dx+(my-pa[1])*dy)/L; t=Math.max(0,Math.min(1,t));
+    const d=Math.hypot(mx-(pa[0]+t*dx),my-(pa[1]+t*dy)); if(d<bd){bd=d;best={rk,hi,i};} } };
+  scan(S.poly.outer,'outer',-1); S.poly.holes.forEach((h,hi)=>scan(h,'hole',hi)); return best; }
+
+// ---------------- pointer (per canvas) ----------------
+function bindPane(v){
+  const cv=v.canvas;
+  cv.addEventListener('contextmenu',e=>e.preventDefault());
+  cv.addEventListener('mousedown',e=>{
+    if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+    if(e.button===2 && v.kind==='fp'){ v._look={x:e.clientX,y:e.clientY}; return; }
+    if(e.button!==0) return;
+    const w=screenToFloor(v,e);
+    if(S.mode==='draw'){ if(w){ pushHist(); S.poly.outer.push(w); S.sel={ring:'outer',hi:-1,i:S.poly.outer.length-1}; refresh(); } return; }
+    if(S.mode==='obstacle'){ if(w){ pushHist(); if(S.openHole<0){ S.poly.holes.push([]); S.openHole=S.poly.holes.length-1; }
+      S.poly.holes[S.openHole].push(w); S.sel={ring:'hole',hi:S.openHole,i:S.poly.holes[S.openHole].length-1}; refresh(); } return; }
+    const hv=hitVertex(v,e);
+    if(hv){ if(e.altKey){ pushHist(); const ring=ringOf(hv); ring.splice(hv.i,1);
+        if(hv.ring==='hole'&&ring.length===0)S.poly.holes.splice(hv.hi,1); S.sel=null; refresh(); }
+      else { S.sel=hv; S.drag=hv; S.dragView=v; S.dragDirty=false; refresh(); } return; }
+    const ei=nearestEdge(v,e);
+    if(ei&&w){ pushHist(); const ring=ei.rk==='outer'?S.poly.outer:S.poly.holes[ei.hi]; ring.splice(ei.i+1,0,w);
+      S.sel={ring:ei.rk,hi:ei.hi,i:ei.i+1}; refresh(); return; }
+    S.sel=null; refresh();
+  });
+  window.addEventListener('mousemove',e=>{
+    if(v.kind==='fp'&&v._look){ const dx=e.clientX-v._look.x,dy=e.clientY-v._look.y; v._look={x:e.clientX,y:e.clientY};
+      S.fp.yaw+=dx*0.005; S.fp.pitch=Math.max(-1.45,Math.min(1.45,S.fp.pitch-dy*0.005)); return; }
+    if(S.drag&&S.dragView===v){ const w=screenToFloor(v,e); if(w){ if(!S.dragDirty){pushHist();S.dragDirty=true;} ringOf(S.drag)[S.drag.i]=w; refresh(); } }
+  });
+  window.addEventListener('mouseup',e=>{ if(e.button===2)v._look=null; if(e.button===0){S.drag=null;S.dragView=null;} });
+  cv.addEventListener('wheel',e=>{ e.preventDefault();
+    if(v.kind==='fp') S.fp.fov=Math.max(20,Math.min(100,S.fp.fov*(e.deltaY>0?1.06:0.94)));
+    else S.regionHalf=Math.max(2,Math.min(120,S.regionHalf*(e.deltaY>0?1.1:0.9)));
+  },{passive:false});
+}
+bindPane(VL); bindPane(VR);
+
+// ---------------- minimap (full navmesh top-down, fit to navmesh ≈90%) ----------------
+function mmBounds(){
+  let xs=[],zs=[];
+  if(S.baked){ const t=S.baked; for(let i=0;i<t.length;i+=3){ xs.push(t[i]); zs.push(t[i+2]); } }
+  const add=r=>r.forEach(p=>{ xs.push(p[0]); zs.push(p[1]); });
+  add(S.poly.outer); S.poly.holes.forEach(add);
+  if(xs.length<2){ const b=S.bounds; return {minx:b.min[0],maxx:b.max[0],minz:b.min[2],maxz:b.max[2]}; }
+  const cx=(Math.min(...xs)+Math.max(...xs))/2, cz=(Math.min(...zs)+Math.max(...zs))/2;
+  let half=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs))/2*1.11;
+  half=Math.max(half,1); return {minx:cx-half,maxx:cx+half,minz:cz-half,maxz:cz+half};
+}
+function drawMinimap(){
+  const c=$("mm"),x=c.getContext('2d'),W=c.width,H=c.height;
+  x.fillStyle='#0b0d11'; x.fillRect(0,0,W,H); if(!S.bounds) return;
+  const bb=mmBounds(), sx=(bb.maxx-bb.minx)||1, sz=(bb.maxz-bb.minz)||1;
+  const sc=Math.min(W/sx,H/sz), ox=(W-sx*sc)/2, oz=(H-sz*sc)/2;
+  const X=wx=>ox+(wx-bb.minx)*sc, Z=wz=>oz+(wz-bb.minz)*sc;
+  if(S.baked && S.showNav){ x.fillStyle='rgba(57,217,138,0.55)'; const t=S.baked;
+    for(let i=0;i<t.length;i+=9){ x.beginPath(); x.moveTo(X(t[i]),Z(t[i+2]));
+      x.lineTo(X(t[i+3]),Z(t[i+5])); x.lineTo(X(t[i+6]),Z(t[i+8])); x.closePath(); x.fill(); } }
+  const ring=(r,col)=>{ if(r.length<2)return; x.strokeStyle=col; x.lineWidth=2; x.beginPath();
+    r.forEach((p,i)=>{ const px=X(p[0]),pz=Z(p[1]); i?x.lineTo(px,pz):x.moveTo(px,pz); }); if(r.length>2)x.closePath(); x.stroke(); };
+  if(S.showInput){
+    if(S.poly.outer.length>=3){                 // light-blue fill (outer minus holes), like the navmesh fill
+      x.beginPath(); const path=r=>{ r.forEach((p,i)=>{ const px=X(p[0]),pz=Z(p[1]); i?x.lineTo(px,pz):x.moveTo(px,pz); }); x.closePath(); };
+      path(S.poly.outer); S.poly.holes.forEach(h=>{ if(h.length>=3) path(h); });
+      x.fillStyle='rgba(84,185,255,0.25)'; x.fill('evenodd');
+    }
+    ring(S.poly.outer,'#54b9ff'); S.poly.holes.forEach(h=>ring(h,'#ff6a6a')); }
+  const hw=S.regionHalfEff||S.regionHalf; x.strokeStyle='#ffe14d'; x.lineWidth=1.5; x.strokeRect(X(S.fp.x-hw),Z(S.fp.z-hw),2*hw*sc,2*hw*sc);
+  const cxp=X(S.fp.x),czp=Z(S.fp.z); x.fillStyle='#ffe14d'; x.beginPath(); x.arc(cxp,czp,4,0,7); x.fill();
+  x.strokeStyle='#ffe14d'; x.lineWidth=2; x.beginPath(); x.moveTo(cxp,czp);
+  x.lineTo(cxp+Math.sin(S.fp.yaw)*14,czp-Math.cos(S.fp.yaw)*14); x.stroke();
+}
+
+// ---------------- modes / toolbar ----------------
+function refresh(){ rebuildInput(); }
+function setMode(m){ S.mode=m; if(m!=='obstacle')S.openHole=-1;
+  for(const [id,mm] of [['mMove','move'],['mDraw','draw'],['mHole','obstacle']]) $(id).classList.toggle('on',mm===m);
+  $("hint").textContent = m==='draw'?'Draw: click to add walkable vertices · Enter to finish'
+    : m==='obstacle'?'Obstacle: click to outline a hole · Enter to finish'
+    : 'Modify: click vertex to select/drag · click edge to insert · Alt-click or Del to delete'; }
+$("mMove").onclick=()=>setMode('move'); $("mDraw").onclick=()=>setMode('draw'); $("mHole").onclick=()=>setMode('obstacle');
+$("clear").onclick=()=>{ pushHist(); S.poly={outer:[],holes:[]}; S.sel=null; S.openHole=-1; refresh(); };
+// ---- undo / redo ----
+function snap(){ return JSON.stringify(S.poly); }
+function pushHist(){ hist.push(snap()); if(hist.length>200)hist.shift(); fut.length=0; }
+function applyState(str){ S.poly=JSON.parse(str); S.sel=null; S.drag=null; S.dragView=null; S.openHole=-1; refresh(); }
+function undo(){ if(!hist.length){log('nothing to undo');return;} fut.push(snap()); applyState(hist.pop()); log('undo'); }
+function redo(){ if(!fut.length){log('nothing to redo');return;} hist.push(snap()); applyState(fut.pop()); log('redo'); }
+$("undo").onclick=undo; $("redo").onclick=redo;
+window.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&(e.key==='z'||e.key==='Z')){ e.preventDefault(); if(e.shiftKey)redo(); else undo(); return; }
+  if((e.ctrlKey||e.metaKey)&&(e.key==='y'||e.key==='Y')){ e.preventDefault(); redo(); return; }
+  if(/INPUT|SELECT/.test(document.activeElement.tagName)) return;
+  if(e.key==='v')setMode('move'); else if(e.key==='b')setMode('draw'); else if(e.key==='o')setMode('obstacle');
+  else if(e.key==='Enter'){ if(S.mode!=='move')setMode('move'); }
+  else if(e.key==='Delete'||e.key==='Backspace'){ if(S.sel){ pushHist(); const ring=ringOf(S.sel); ring.splice(S.sel.i,1);
+    if(S.sel.ring==='hole'&&ring.length===0)S.poly.holes.splice(S.sel.hi,1); S.sel=null; refresh(); } }
+  keys.add(e.key); });
+window.addEventListener('keyup',e=>keys.delete(e.key));
+
+// ---------------- movement ----------------
+let prev=performance.now();
+function movement(dt){ if(/INPUT|SELECT/.test(document.activeElement.tagName)) return;
+  const spd=3.5*dt,turn=1.4*dt,f=S.fp;
+  const fwd=new THREE.Vector3(Math.sin(f.yaw),0,-Math.cos(f.yaw)), right=new THREE.Vector3(Math.cos(f.yaw),0,Math.sin(f.yaw));
+  const k=ch=>keys.has(ch);
+  if(k('w')||k('W')){f.x+=fwd.x*spd;f.z+=fwd.z*spd;} if(k('s')||k('S')){f.x-=fwd.x*spd;f.z-=fwd.z*spd;}
+  if(k('a')||k('A')){f.x-=right.x*spd;f.z-=right.z*spd;} if(k('d')||k('D')){f.x+=right.x*spd;f.z+=right.z*spd;}
+  if(k('z')||k('Z'))f.y+=spd; if(k('x')||k('X'))f.y-=spd;
+  if(k('ArrowLeft'))f.yaw-=turn; if(k('ArrowRight'))f.yaw+=turn;
+  if(k('ArrowUp'))f.pitch=Math.min(1.45,f.pitch+turn); if(k('ArrowDown'))f.pitch=Math.max(-1.45,f.pitch-turn); }
+
+// ---------------- save (generate + write in one click) ----------------
+function params(){ return {agent_radius:+$("radius").value,agent_height:+$("height").value,
+  agent_max_climb:+$("climb").value,agent_max_slope:+$("slope").value,cell_size:+$("cell").value,cell_height:0.02}; }
+async function saveNavmesh(){
+  if(S.poly.outer.length<3){ log('draw a walkable area first (≥3 vertices)'); return; }
+  const btn=$("save"), lbl=btn.textContent; btn.disabled=true; btn.textContent='⏳ Saving…';
+  log('generating navmesh & saving…');
+  const polys=[{floor_y:+$("floor").value,outer:S.poly.outer,holes:S.poly.holes.filter(h=>h.length>=3)}];
+  try{
+    const b=await (await fetch('/api/bake',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scene:S.scene,polys,params:params()})})).json();
+    if(!b.ok){ log('failed: '+b.error); if(b.trace)console.log(b.trace); $("stats").textContent='generate failed'; }
+    else {
+      S.baked=b64f32(b.tris_b64); rebuildNav();
+      const s=await (await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({scene:S.scene})})).json();
+      if(s.ok){ $("stats").innerHTML='saved navmesh: <b>'+b.navigable_area.toFixed(2)+' m²</b> · islands '+b.num_islands+' · '+b.n_tris+' tris';
+        log('saved → '+s.path); }
+      else log('save failed: '+s.error);
+    }
+  }catch(err){ log('error: '+err); }
+  btn.disabled=false; btn.textContent=lbl;
+}
+$("save").onclick=saveNavmesh;
+$("hideNav").onclick=()=>{ S.showNav=!S.showNav; $("hideNav").textContent=(S.showNav?'Hide':'Show')+' navmesh';
+  $("hideNav").classList.toggle('on',!S.showNav); for(const v of VIEWS) if(v.nav)v.nav.visible=S.showNav; };
+$("hideArea").onclick=()=>{ S.showInput=!S.showInput; $("hideArea").textContent=(S.showInput?'Hide':'Show')+' drawn area';
+  $("hideArea").classList.toggle('on',!S.showInput); for(const v of VIEWS) v.input.visible=S.showInput; };
+$("advBtn").onclick=()=>{ const a=$("advbar"); a.style.display=(a.style.display==='none'?'flex':'none');
+  $("advBtn").classList.toggle('on'); resize(); };
+// Floor height + Camera height: slider and number input stay in sync (each updates
+// the OTHER control, never its own value, so typing isn't disrupted mid-edit).
+function applyFloor(v){ if(isNaN(+v))return; S.floorY=+v; refresh(); rebuildNav(); }
+$("floor").addEventListener('input',e=>{ applyFloor(e.target.value); $("floorNum").value=(+e.target.value).toFixed(3); });
+$("floorNum").addEventListener('input',e=>{ applyFloor(e.target.value); $("floor").value=e.target.value; });
+function applyCam(v){ if(isNaN(+v))return; S.camHeight=+v; }
+$("cam").addEventListener('input',e=>{ applyCam(e.target.value); $("camNum").value=(+e.target.value).toFixed(2); });
+$("camNum").addEventListener('input',e=>{ applyCam(e.target.value); $("cam").value=e.target.value; });
+
+// ---------------- resize / loop ----------------
+function resize(){
+  for(const v of VIEWS){ const r=v.canvas.getBoundingClientRect();
+    v.renderer.setSize(r.width,r.height,false); v.camera.aspect=r.width/r.height; v.camera.updateProjectionMatrix(); }
+  const mm=$("mm"); const sz=Math.round(Math.max(110,Math.min(230,Math.min(innerWidth,innerHeight)*0.16)));
+  mm.width=sz; mm.height=sz; mm.style.width=sz+'px'; mm.style.height=sz+'px';
+  syncMatRes();
+}
+window.addEventListener('resize',resize);
+function loop(){ requestAnimationFrame(loop);
+  const now=performance.now(),dt=Math.min(0.05,(now-prev)/1000); prev=now;
+  movement(dt); updateFPCam(); updateTopCam();
+  VL.renderer.render(VL.scene,VL.camera); VR.renderer.render(VR.scene,VR.camera);
+  $("rinfo").textContent='region '+(2*(S.regionHalfEff||S.regionHalf)).toFixed(1)+' m · fov '+S.fp.fov.toFixed(0)+'° · pos '+S.fp.x.toFixed(1)+','+S.fp.z.toFixed(1);
+  drawMinimap(); }
+
+// ---------------- scene load ----------------
+async function loadScenes(){ const r=await (await fetch('/api/scenes')).json();
+  const sel=$("scene"); sel.innerHTML='';
+  r.scenes.forEach(s=>{ const o=document.createElement('option'); o.value=s.name;
+    o.textContent=(s.has_navmesh?'✓ ':'  ')+s.name+' ['+s.split+']'; sel.appendChild(o); });
+  const want=new URLSearchParams(location.search).get('scene')||r.default; sel.value=want;
+  sel.onchange=()=>{ location.search='?scene='+encodeURIComponent(sel.value); };
+  await loadScene(want); }
+async function loadScene(name){ showLoading(name);
+  const r=await (await fetch('/api/scene?name='+encodeURIComponent(name))).json();
+  if(r.error){ log(r.error); hideLoading(); return; }
+  S.scene=name; S.bounds=r.bounds; S.floorY=r.floor_y+0.1; S.suggested=r.suggested;
+  S.ceilingY=(r.ceiling_y!=null)?r.ceiling_y:null;   // indoor: cap the top-down camera just below this
+  S.poly={outer:[],holes:[]}; S.sel=null; S.baked=null; hist=[]; fut=[];
+  const cx=(r.suggested[0][0]+r.suggested[2][0])/2, cz=(r.suggested[0][1]+r.suggested[2][1])/2;
+  S.fp={x:cx,y:r.floor_y+1.6,z:cz,yaw:0,pitch:0,fov:70};
+  S.regionHalf=10; S.regionHalfEff=10;   // local top-down: ~20 m across, centred on you (scroll to zoom)
+  // default top-down camera height: just below the ceiling indoors, else high above
+  const DEF_TOP_H=S.regionHalf/Math.tan(THREE.MathUtils.degToRad(TOP_FOV/2));   // ≈40 m shows ~20 m at TOP_FOV
+  S.camHeight=(S.ceilingY!=null)?(S.ceilingY-CEIL_GAP):(S.floorY+DEF_TOP_H);
+  const fl=$("floor"),fn=$("floorNum"); const flo=Math.max(r.bounds.min[1],r.floor_y-2), fhi=Math.min(r.bounds.max[1],r.floor_y+2);
+  for(const el of [fl,fn]){ el.min=flo.toFixed(3); el.max=fhi.toFixed(3); el.step='0.01'; el.value=S.floorY.toFixed(3); }
+  const cm=$("cam"),cn=$("camNum");
+  const camMin=S.floorY+0.3, camMax=(S.ceilingY!=null)?Math.max(S.ceilingY+1.5,S.floorY+4):(S.floorY+2*DEF_TOP_H);
+  cm.min=camMin.toFixed(2); cm.max=camMax.toFixed(2); cm.value=S.camHeight.toFixed(2);
+  cn.min=S.floorY.toFixed(2); cn.value=S.camHeight.toFixed(2);   // number input has no hard max (any height)
+  $("cnt").textContent='('+r.n_splats.toLocaleString()+' splats)';
+  let startMode='draw';
+  if(r.existing_navmesh){ S.baked=b64f32(r.existing_navmesh.tris_b64);
+    const ol=r.existing_navmesh.outline;
+    if(ol && ol.outer && ol.outer.length>=3){           // load navmesh boundary as the editable blue polygon
+      S.poly={outer:ol.outer.map(p=>[p[0],p[1]]), holes:(ol.holes||[]).map(h=>h.map(p=>[p[0],p[1]]))};
+      startMode='move';                                  // ready to edit the existing navmesh
+    }
+    $("stats").innerHTML='existing navmesh: <b>'+r.existing_navmesh.navigable_area.toFixed(2)+' m²</b> · islands '+r.existing_navmesh.num_islands
+      +(ol?(' · editable outline '+ol.outer.length+'v'+(ol.holes&&ol.holes.length?'+'+ol.holes.length+' holes':'')):''); }
+  else $("stats").textContent='no navmesh baked';
+  ensureMarker(); resize(); rebuildInput(); rebuildNav(); setMode(startMode);
+  loadSplats(r.splat_url);   // hideLoading() is called inside, once splats finish/err
+  log('loaded '+name+' — '+r.n_splats.toLocaleString()+' splats · floor Y='+r.floor_y.toFixed(3)); }
+
+setMode('draw'); await loadScenes(); loop();
+</script>
+</body>
+</html>
