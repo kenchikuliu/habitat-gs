@@ -569,8 +569,10 @@ def cluster_detections(detections):
 # Quality filters
 # =====================================================================
 
-def merge_close_instances(objects, min_dist=INSTANCE_MERGE_DIST):
+def merge_close_instances(objects, min_dist=None):
     """Merge object instances that are within min_dist of each other."""
+    if min_dist is None:                        # read the LIVE global at call time, not a
+        min_dist = INSTANCE_MERGE_DIST          # def-time default (--indoor rebinds this global)
     if len(objects) <= 1:
         return objects
     positions = np.array([o["position"] for o in objects])
@@ -604,8 +606,10 @@ def merge_close_instances(objects, min_dist=INSTANCE_MERGE_DIST):
     return merged
 
 
-def cap_instances(objects, max_instances=MAX_INSTANCES_PER_CATEGORY):
+def cap_instances(objects, max_instances=None):
     """Keep at most max_instances, selecting the most spread out ones."""
+    if max_instances is None:                   # read the LIVE global at call time, not a
+        max_instances = MAX_INSTANCES_PER_CATEGORY   # def-time default (--indoor rebinds this global)
     if len(objects) <= max_instances:
         return objects
     # Greedy farthest-point selection
