@@ -7,6 +7,8 @@
     <img alt="Habitat-GS" src="docs/gs_assets/logo_black.png" width="50%">
   </picture><br>
   A High-Fidelity Navigation Simulator with Dynamic Gaussian Splatting
+  <br>
+  <sub>ECCV 2026</sub>
 </h1>
 
 <div align="center">
@@ -41,6 +43,8 @@
 
 
 ## 📢 News
+
+> **[2026-06]** 🎉 Habitat-GS is accepted to ECCV 2026! See you in Malmö!
 
 > **[2026-05]** 🎉 Try our [NavMesh editing tool](https://github.com/zju3dv/habitat-gs/tree/main/navmesh_editor)! It closes the loop from a raw 3DGS scene to navigable simulation (**3DGS → NavMesh → simulation**): draw/edit the walkable area on the 3DGS scene in your browser, bake a Habitat NavMesh, and use it for navigation in Habitat-GS.
 
