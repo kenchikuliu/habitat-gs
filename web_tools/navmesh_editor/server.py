@@ -4,7 +4,7 @@ scene and bake a Habitat .navmesh.
 
 Run with a Python that has habitat_sim + flask (e.g. the habitat-gs conda env):
 
-    python server.py --port 8080
+    python web_tools/navmesh_editor/server.py --port 8080
 
 then open http://<host>:8080 (over an SSH tunnel if running remotely). The scene
 directory and the habitat_sim interpreter can be overridden with --gs-dir /
@@ -26,6 +26,8 @@ import numpy as np
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Repo root is two levels up: web_tools/navmesh_editor/ -> web_tools/ -> repo root.
+REPO_ROOT = os.path.normpath(os.path.join(HERE, os.pardir, os.pardir))
 STATIC = os.path.join(HERE, "static")
 TMP = os.path.join(HERE, "_tmp")
 NAV_WORKER = os.path.join(HERE, "_nav_worker.py")
@@ -39,7 +41,7 @@ os.makedirs(TMP, exist_ok=True)
 # --gs-dir / the env var.
 GS_DIR = os.environ.get(
     "NAVMESH_EDITOR_GS_DIR",
-    os.path.normpath(os.path.join(HERE, os.pardir, "data", "scene_datasets", "gs_scenes")),
+    os.path.join(REPO_ROOT, "data", "scene_datasets", "gs_scenes"),
 )
 # All habitat_sim work runs in _nav_worker.py as a subprocess, so this server can
 # run under any Python; only the worker needs habitat_sim. By default the worker
@@ -142,9 +144,9 @@ def prepare_scene(ply_path):
     """Idempotent: ensure _tmp/<scene>.splat exists and return scene metadata."""
     if ply_path in _scene_cache and os.path.exists(_scene_cache[ply_path]["splat"]):
         return _scene_cache[ply_path]
-    import time as _t
+    import time
     from plyfile import PlyData
-    t0 = _t.time()
+    t0 = time.time()
     pd = PlyData.read(ply_path)
     v = pd["vertex"]
     n = len(v)
@@ -178,7 +180,7 @@ def prepare_scene(ply_path):
     out['rot'] = np.clip(np.round(q * 128 + 128), 0, 255).astype(np.uint8)
     out.tofile(splat)
     print(f"[splat] {name}: {n:,} -> {len(idx):,} splats "
-          f"({os.path.getsize(splat)/1024**2:.1f} MB) in {_t.time()-t0:.1f}s", flush=True)
+          f"({os.path.getsize(splat)/1024**2:.1f} MB) in {time.time()-t0:.1f}s", flush=True)
 
     fy, ceiling_y = floor_ceiling_estimate(xyz[idx, 1])   # opaque (kept) splats -> cleaner profile
     band = xyz[(xyz[:, 1] >= fy - 0.05) & (xyz[:, 1] <= fy + 0.6)]

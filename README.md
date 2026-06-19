@@ -46,7 +46,7 @@
 
 > **[2026-06]** 🎉 Habitat-GS is accepted to ECCV 2026! See you in Malmö!
 
-> **[2026-05]** 🎉 Try our [NavMesh editing tool](https://github.com/zju3dv/habitat-gs/tree/main/navmesh_editor)! It closes the loop from a raw 3DGS scene to navigable simulation (**3DGS → NavMesh → simulation**): draw/edit the walkable area on the 3DGS scene in your browser, bake a Habitat NavMesh, and use it for navigation in Habitat-GS.
+> **[2026-05]** 🎉 Try our [NavMesh editing tool](https://github.com/zju3dv/habitat-gs/blob/main/web_tools/README.md#navmesh_editor)! It closes the loop from a raw 3DGS scene to navigable simulation (**3DGS → NavMesh → simulation**): draw/edit the walkable area on the 3DGS scene in your browser, bake a Habitat NavMesh, and use it for navigation in Habitat-GS.
 
 > **[2026-05]** 🎉 [GS dataset](https://huggingface.co/datasets/RukawaY/gs_scenes) is expanded with 64 [InteriorGS](https://huggingface.co/datasets/spatialverse/InteriorGS) scenes! Now 129 scenes in total!
 
@@ -166,16 +166,16 @@ For a static GS scene without avatars, you only need:
 
 - a background 3DGS asset (`background.ply`) for far-field content like sky or distant geometry that was separated from the foreground during reconstruction. To render foreground and background together as a single stage, merge the two `.ply` files into one with `tools_gs/merge_background_gs.py`.
 
-For NavMesh generation, use our interactive `navmesh_editor` tool: it renders the GS scene in your browser and lets you draw/modify the walkable area, then bakes a Habitat `.navmesh` for simulation.
+For NavMesh generation, use our interactive [interactive web tool](https://github.com/zju3dv/habitat-gs/blob/main/web_tools/README.md#navmesh_editor): it renders the GS scene in your browser and lets you draw/modify the walkable area, then bakes a Habitat `.navmesh` for simulation.
 
 ```bash
 conda activate habitat-gs
 
-python navmesh_editor/server.py --port 8080   # Scene dir by default: data/scene_datasets/gs_scenes (train/ and val/ subfolders).
+python web_tools/navmesh_editor/server.py --port 8080   # Scene dir by default: data/scene_datasets/gs_scenes (train/ and val/ subfolders).
 # then open http://localhost:8080 
 
-python navmesh_editor/server.py --port 8080 --scene interior_0007_840137        # Open a specific scene
-python navmesh_editor/server.py --port 8080 --gs-dir /path/to/gs_scenes/train   # Open scenes in a directory
+python web_tools/navmesh_editor/server.py --port 8080 --scene interior_0007_840137        # Open a specific scene
+python web_tools/navmesh_editor/server.py --port 8080 --gs-dir /path/to/gs_scenes/train   # Open scenes in a directory
 ```
 
 </details>
@@ -488,6 +488,8 @@ python scripts_gs/generate_objectnav_episodes.py
 # ObjectNav episodes - indoor categories on interiorGS scenes (--indoor switch)
 python scripts_gs/generate_objectnav_episodes.py --indoor
 ```
+
+> 💡 The ObjectNav episodes generator above auto-detects objects with SAM + CLIP, which may mislocalize them. For accurate hand-verified annotations on any scene, use our [interactive web tool](https://github.com/zju3dv/habitat-gs/blob/main/web_tools/README.md#objectnav_helper) to place and label objects on the rendered GS scene in your browser.
 
 <details>
 <summary>Click to expand: ObjectNav episode generation details</summary>

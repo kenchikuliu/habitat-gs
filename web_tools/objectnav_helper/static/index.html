@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>objectnav_helper</title>
+<style>
+  :root{--bg:#14161a;--panel:#1d2129;--line:#2c333f;--fg:#d7dbe2;--mut:#8a93a0;
+        --acc:#54b9ff;--good:#39d98a;--warn:#ffb454;--bad:#ff6a6a;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+            font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;}
+  body{display:flex;flex-direction:column;}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 10px;
+       background:var(--panel);border-bottom:1px solid var(--line);flex:none;}
+  .bar .g{display:flex;gap:6px;align-items:center;}
+  .bar label{color:var(--mut);}
+  select,input[type=number],button{background:#262c36;color:var(--fg);
+       border:1px solid var(--line);border-radius:5px;padding:5px 8px;font-size:13px;}
+  input[type=number]{width:60px;} button{cursor:pointer;}
+  button:hover{border-color:var(--acc);}
+  button.on{background:#1f4f73;border-color:var(--acc);color:#fff;}
+  button.go{background:#1f6b46;border-color:var(--good);}
+  .sep{width:1px;height:22px;background:var(--line);}
+  .spacer{flex:1 1 auto;}
+  #palette{gap:4px;padding:5px 10px;max-height:74px;overflow-y:auto;}
+  .chip{display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;border:1px solid var(--line);
+        background:#262c36;cursor:pointer;font-size:12px;}
+  .chip .sw{width:11px;height:11px;border-radius:50%;border:1px solid #0006;}
+  .chip.on{outline:2px solid var(--acc);background:#1f4f73;}
+  #main{flex:1 1 auto;min-height:0;display:flex;}
+  .pane{position:relative;flex:1;min-width:0;overflow:hidden;}
+  #paneL{border-right:1px solid var(--line);}
+  canvas.view{display:block;width:100%;height:100%;}
+  .tag{position:absolute;top:8px;left:10px;padding:3px 9px;border-radius:5px;
+       background:#000a;color:#b6bdc8;font-size:11px;pointer-events:none;z-index:3;max-width:80%;}
+  .tag b{color:var(--acc);}
+  #mm{position:absolute;top:8px;right:8px;border:1px solid var(--line);border-radius:6px;
+      background:#0b0d11dd;z-index:4;pointer-events:none;}
+  #rinfo{position:absolute;bottom:8px;right:10px;background:#000a;color:#b6bdc8;font-size:11px;
+         padding:3px 8px;border-radius:5px;z-index:4;pointer-events:none;}
+  #foot{height:34px;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);
+        border-top:1px solid var(--line);font-size:12px;flex:none;}
+  #stats b{color:var(--good);} #hint{color:var(--warn);}
+  #log{color:var(--mut);margin-left:auto;max-width:42%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  #cam{width:120px;}
+  #warn{color:var(--bad);font-weight:bold;}
+  #warnbar:has(#warn:empty){display:none;}   /* its own line below the toolbar; hidden when no message */
+  .err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+       text-align:center;color:var(--bad);background:#0b0d11cc;padding:20px;z-index:5;}
+  #loading{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+           background:#0b0d11ee;color:var(--fg);font-size:18px;z-index:30;}
+</style>
+</head>
+<body>
+<div class="bar" id="bar1">
+  <div class="g"><label>Scene</label><select id="scene"></select><span id="cnt" style="color:var(--mut)"></span></div>
+  <div class="sep"></div>
+  <div class="g"><label title="Top-down (right pane) camera height. Drag or type.">Camera height</label>
+    <input type="range" id="cam" step="0.05"/><input type="number" id="camNum" step="0.1"/><span style="color:var(--mut)">m</span></div>
+  <div class="sep"></div>
+  <div class="g"><label title="Footprint radius (m) used to sample reachable view_points around each placed object.">obj radius</label>
+    <input type="number" id="radius" value="0.75" step="0.25"/></div>
+  <div class="g"><label title="Max episode geodesic distance (m). Larger suits big outdoor scenes.">max dist</label>
+    <input type="number" id="furthest" value="30" step="5"/></div>
+</div>
+<div class="bar" id="warnbar"><span id="warn"></span></div>
+<div class="bar" id="palette"></div>
+<div class="bar" id="bar2">
+  <div class="g">
+    <button id="mPlace" class="on" title="Click the ground to place an object of the active category (key P)">📍 Place</button>
+    <button id="mSelect" title="Click an object to select/move; Alt-click or Del to delete (key V)">✋ Select / Move</button>
+    <button id="clear">␥ Clear</button>
+    <button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button>
+    <button id="redo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+    <button id="hideObj" title="Show/hide placed object markers">Hide objects</button>
+    <button id="hideNav" title="Show/hide the green navmesh (walkable area)">Hide navmesh</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="g">
+    <span id="active" style="color:var(--mut)"></span>
+    <button id="save" class="go" title="Generate ObjectNav episodes from the placed objects (view_points sampled on the navmesh) and write the episode file. No GT needed.">💾 Save &amp; generate episodes</button>
+  </div>
+</div>
+
+<div id="main">
+  <div class="pane" id="paneL">
+    <span class="tag">FP view — <b>WASD</b> move · <b>Z/X</b> up/down · <b>arrows</b> turn/look · <b>right-drag</b> look · <b>scroll</b> zoom · <b>left-click</b> place/select</span>
+    <canvas id="cvL" class="view"></canvas>
+    <div class="err" id="errL"></div>
+  </div>
+  <div class="pane" id="paneR">
+    <span class="tag">Top-down (around you) — <b>scroll</b> zoom · <b>left-click</b> place/select</span>
+    <canvas id="cvR" class="view"></canvas>
+    <canvas id="mm"></canvas>
+    <div id="rinfo"></div>
+    <div class="err" id="errR"></div>
+  </div>
+</div>
+
+<div id="foot"><span id="stats">no objects placed</span><span id="hint"></span><span id="log"></span></div>
+<div id="loading"></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+let GS = null;
+try { GS = await import('@mkkellogg/gaussian-splats-3d'); }
+catch(e){ console.error('splat lib failed', e); }
+
+const TOP_FOV = 28, TOP_FOV_MAX = 75, CEIL_GAP = 0.15;
+const $ = id => document.getElementById(id);
+const log = m => { $("log").textContent = m; };
+const showLoading = n => { const el=$("loading"); el.textContent='Loading '+n+' …'; el.style.display='flex'; };
+const hideLoading = () => { $("loading").style.display='none'; };
+const b64f32 = s => { const b=atob(s),u=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return new Float32Array(u.buffer); };
+
+// fixed distinct colour per ObjectNav category (filled in once categories arrive)
+const PAL=['#e6194B','#f58231','#3cb44b','#ffe119','#4363d8','#911eb4','#42d4f4','#f032e6',
+  '#bfef45','#fabed4','#469990','#dcbeff','#9A6324','#fffac8','#800000','#aaffc3',
+  '#808000','#ffd8b1','#000075','#a9a9a9','#e6beff','#00b894'];
+const CATCOLOR={};
+const colHex = c => CATCOLOR[c] || '#ffffff';
+const colInt = c => parseInt(colHex(c).slice(1),16);
+
+const S = {
+  scene:null, split:null, bounds:null, floorY:0, ceilingY:null, hasNavmesh:true,
+  objects:[],                       // [{cat, x, y, z}]
+  navmesh:null, navBounds:null, showNav:true, dropped:null,   // navmesh display + unreachable-object flags
+  activeCat:null, mode:'place', sel:-1, drag:false, dragView:null, dragDirty:false,
+  showObjects:true, camHeight:40,
+  fp:{x:0,y:0,z:0,yaw:0,pitch:0,fov:70}, regionHalf:12, regionHalfEff:12,
+};
+const keys=new Set(); let hist=[], fut=[];
+
+// ===== two independent splat viewers (one per canvas), shared download =====
+function makeView(canvas, kind){
+  const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0e1014);
+  const camera=new THREE.PerspectiveCamera(kind==='fp'?S.fp.fov:TOP_FOV,1,0.02,8000); camera.up.set(0,1,0);
+  const v={kind,canvas,renderer,scene,camera,viewer:null,input:new THREE.Group(),nav:new THREE.Group(),navMat:null,marker:null,_look:null};
+  scene.add(v.input); scene.add(v.nav); return v;
+}
+const VL=makeView($("cvL"),'fp'), VR=makeView($("cvR"),'top'), VIEWS=[VL,VR];
+
+async function loadSplats(url){
+  if(!GS){ for(const id of ['errL','errR']){ $(id).style.display='flex';
+      $(id).textContent='3DGS renderer failed to load (no CDN?). Annotating still works.'; } hideLoading(); return; }
+  let src=url;
+  try{ const buf=await (await fetch(url)).arrayBuffer(); src=URL.createObjectURL(new Blob([buf])); }
+  catch(e){ console.error('splat fetch failed',e); hideLoading(); return; }
+  for(const v of VIEWS){
+    try{ const viewer=new GS.DropInViewer({gpuAcceleratedSort:false,sharedMemoryForWorkers:false});
+      v.viewer=viewer; v.scene.add(viewer);
+      Promise.resolve(viewer.addSplatScene(src,{format:GS.SceneFormat.Splat,showLoadingUI:false,splatAlphaRemovalThreshold:1}))
+        .then(()=>log('splats loaded ('+v.kind+')')).catch(err=>console.error('addSplatScene',err));
+    }catch(err){ console.error('viewer init',err); }
+  }
+  // The blob is downloaded and handed to both viewers; the scene is already interactive and the
+  // splats stream in progressively — clear the overlay HERE rather than waiting for addSplatScene
+  // to fully settle (which can stall on large scenes and leave "Loading…" stuck forever).
+  hideLoading();
+}
+
+// ===== object marker overlays =====
+function disposeGroup(g){ g.traverse(o=>{
+  if(o.isSprite){ if(o.material)o.material.dispose(); return; }   // sprite geometry + label texture are SHARED/cached — never dispose them
+  if(o.geometry)o.geometry.dispose();
+  if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); }
+}); g.clear(); }
+const _labelTex={};
+function labelTexture(cat){
+  if(_labelTex[cat]) return _labelTex[cat];
+  const c=document.createElement('canvas'); c.width=256; c.height=64; const x=c.getContext('2d');
+  x.fillStyle='rgba(8,10,14,0.72)'; x.fillRect(0,0,256,64);
+  x.fillStyle=colHex(cat); x.fillRect(0,0,8,64);
+  x.fillStyle='#fff'; x.font='bold 26px sans-serif'; x.textAlign='center'; x.textBaseline='middle';
+  x.fillText(cat,132,34); const t=new THREE.CanvasTexture(c); _labelTex[cat]=t; return t;
+}
+function rebuildObjects(){
+  for(const v of VIEWS){
+    disposeGroup(v.input);
+    S.objects.forEach((o,i)=>{
+      const sel=i===S.sel, bad=S.dropped&&S.dropped.has(i);   // bad = unreachable on last save
+      const sph=new THREE.Mesh(new THREE.SphereGeometry(sel?0.42:0.3,16,12),
+        new THREE.MeshBasicMaterial({color:bad?0xff3b3b:colInt(o.cat)}));
+      sph.position.set(o.x,o.y,o.z); sph.renderOrder=5; sph.userData.objIndex=i; v.input.add(sph);
+      if(sel||bad){ const ring=new THREE.Mesh(new THREE.TorusGeometry(bad?0.7:0.62,0.06,8,24),
+        new THREE.MeshBasicMaterial({color:bad?0xff3b3b:0xffe14d})); ring.rotation.x=Math.PI/2;
+        ring.position.set(o.x,o.y,o.z); ring.renderOrder=6; v.input.add(ring); }
+      const lab=new THREE.Sprite(new THREE.SpriteMaterial({map:labelTexture(o.cat),depthTest:false,depthWrite:false}));
+      lab.position.set(o.x,o.y+0.7,o.z); lab.scale.set(2.4,0.6,1); lab.renderOrder=7; lab.userData.objIndex=i; v.input.add(lab);
+    });
+    v.input.visible=S.showObjects;
+  }
+}
+// read-only navmesh overlay (green translucent fill + faint wireframe), so the user can see
+// where the walkable area is and place objects near it.
+function rebuildNav(){
+  // Same look as navmesh_editor: green translucent fill (0x39d98a @0.28) + fat green
+  // wireframe (0x2fe39a, linewidth 3 via Line2/LineMaterial).
+  for(const v of VIEWS){
+    if(v.nav) disposeGroup(v.nav);
+    v.navMat=null;
+    if(!S.navmesh) continue;
+    const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(S.navmesh.slice(),3));
+    const fill=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0x39d98a,transparent:true,
+      opacity:0.28,side:THREE.DoubleSide,depthWrite:false})); fill.renderOrder=2; v.nav.add(fill);
+    const wf=new THREE.WireframeGeometry(geo);
+    const sg=new LineSegmentsGeometry(); sg.setPositions(Array.from(wf.attributes.position.array)); wf.dispose();
+    const r=v.canvas.getBoundingClientRect();
+    const mat=new LineMaterial({color:0x2fe39a,linewidth:3}); mat.resolution.set(r.width||1,r.height||1);
+    const wire=new LineSegments2(sg,mat); wire.renderOrder=3; v.nav.add(wire); v.navMat=mat;
+    v.nav.visible=S.showNav;
+  }
+}
+function ensureMarker(){ if(VR.marker)return;
+  const m=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.4,16),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.6}));
+  m.renderOrder=8; VR.scene.add(m); VR.marker=m; }
+
+// ===== cameras (identical approach to navmesh_editor) =====
+function fpDir(){ const cy=Math.cos(S.fp.pitch);
+  return new THREE.Vector3(Math.sin(S.fp.yaw)*cy,Math.sin(S.fp.pitch),-Math.cos(S.fp.yaw)*cy); }
+function updateFPCam(){ const c=VL.camera,f=S.fp; c.fov=f.fov; c.position.set(f.x,f.y,f.z);
+  c.up.set(0,1,0); c.lookAt(new THREE.Vector3(f.x,f.y,f.z).add(fpDir())); c.updateProjectionMatrix(); }
+function updateTopCam(){ const c=VR.camera, camY=S.camHeight, h=Math.max(0.4,camY-S.floorY);
+  let fov=THREE.MathUtils.clamp(2*Math.atan(S.regionHalf/h)*180/Math.PI,8,TOP_FOV_MAX);
+  const half=h*Math.tan(THREE.MathUtils.degToRad(fov/2)); S.regionHalfEff=half;
+  c.fov=fov; c.position.set(S.fp.x,camY,S.fp.z); c.up.set(0,0,-1); c.lookAt(S.fp.x,S.floorY,S.fp.z); c.updateProjectionMatrix();
+  if(VR.marker){ VR.marker.position.set(S.fp.x,S.floorY+0.1,S.fp.z); VR.marker.scale.setScalar(Math.max(0.4,half/14));
+    VR.marker.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),new THREE.Vector3(Math.sin(S.fp.yaw),0,-Math.cos(S.fp.yaw))); } }
+
+// ===== picking =====
+const _ray=new THREE.Raycaster(), _pick=new THREE.Raycaster(), _plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+const _hit=new THREE.Vector3();
+function rectOf(v){ return v.canvas.getBoundingClientRect(); }
+function ndcOf(v,e){ const r=rectOf(v);
+  return new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1); }
+function rayOf(v,e){ _ray.setFromCamera(ndcOf(v,e),v.camera); return _ray.ray; }
+function screenToFloor(v,e){ _plane.normal.set(0,1,0); _plane.constant=-S.floorY;   // floor plane at click height
+  const ray=rayOf(v,e);
+  if(ray.intersectPlane(_plane,_hit)) return [_hit.x,_hit.z];
+  // ray is ~parallel to / above the floor (e.g. FP view looking level) — fall back to a point a
+  // few metres ahead along the cursor's horizontal direction, so a click ALWAYS lands an object.
+  const d=ray.direction, h=Math.hypot(d.x,d.z)||1e-6, dist=6.0;
+  return [ray.origin.x + d.x/h*dist, ray.origin.z + d.z/h*dist]; }
+function projectPx(v,x,y,z){ const r=rectOf(v); const p=new THREE.Vector3(x,y,z).project(v.camera);
+  if(p.z>1) return null; return [(p.x*0.5+0.5)*r.width,(-p.y*0.5+0.5)*r.height]; }
+// Selection: raycast the actual marker meshes/labels (robust at any zoom/angle); fall back to
+// nearest projected marker within ~26px for tiny/distant markers.
+function hitObject(v,e){
+  _pick.setFromCamera(ndcOf(v,e),v.camera);
+  for(const h of _pick.intersectObjects(v.input.children,false))
+    if(h.object.userData && h.object.userData.objIndex!=null) return h.object.userData.objIndex;
+  const r=rectOf(v),mx=e.clientX-r.left,my=e.clientY-r.top; let best=-1,bd=26*26;
+  S.objects.forEach((o,i)=>{ const pp=projectPx(v,o.x,o.y,o.z); if(!pp)return;
+    const d=(pp[0]-mx)**2+(pp[1]-my)**2; if(d<bd){bd=d;best=i;} }); return best; }
+// Dragging the selected object: plain drag moves it on a HORIZONTAL plane at the object's OWN
+// height (so it stays under the cursor and works even when looking ~level); Shift+drag moves it
+// VERTICALLY along world-Y on a camera-facing plane.
+function dragObject(v,e){ const o=S.objects[S.sel]; if(!o) return;
+  const ray=rayOf(v,e);
+  if(e.shiftKey){
+    const n=new THREE.Vector3(); v.camera.getWorldDirection(n); n.y=0;
+    if(n.lengthSq()<1e-4) n.set(0,0,1); n.normalize();
+    _plane.normal.copy(n); _plane.constant=-n.dot(new THREE.Vector3(o.x,o.y,o.z));
+    if(ray.intersectPlane(_plane,_hit)){ if(!S.dragDirty){pushHist();S.dragDirty=true;}
+      o.y=Math.max(S.bounds.min[1]-1,Math.min(S.bounds.max[1]+1,_hit.y)); refresh(); }
+  } else {
+    _plane.normal.set(0,1,0); _plane.constant=-o.y;
+    if(ray.intersectPlane(_plane,_hit)){ if(!S.dragDirty){pushHist();S.dragDirty=true;}
+      o.x=_hit.x; o.z=_hit.z; refresh(); }
+  } }
+
+// ===== pointer =====
+function bindPane(v){
+  const cv=v.canvas;
+  cv.addEventListener('contextmenu',e=>e.preventDefault());
+  cv.addEventListener('mousedown',e=>{
+    if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+    if(e.button===2 && v.kind==='fp'){ v._look={x:e.clientX,y:e.clientY}; return; }
+    if(e.button!==0) return;
+    if(S.mode==='place'){ if(!S.activeCat){ log('pick a category first'); return; }
+      const w=screenToFloor(v,e); if(w){ pushHist(); S.objects.push({cat:S.activeCat,x:w[0],y:S.floorY+0.5,z:w[1]});
+        S.sel=S.objects.length-1; refresh(); } return; }
+    // select mode
+    const hi=hitObject(v,e);
+    if(hi>=0){ if(e.altKey){ pushHist(); S.objects.splice(hi,1); S.sel=-1; refresh(); }
+      else { S.sel=hi; S.drag=true; S.dragView=v; S.dragDirty=false; refresh(); } return; }
+    S.sel=-1; refresh();
+  });
+  window.addEventListener('mousemove',e=>{
+    if(v.kind==='fp'&&v._look){ const dx=e.clientX-v._look.x,dy=e.clientY-v._look.y; v._look={x:e.clientX,y:e.clientY};
+      S.fp.yaw+=dx*0.005; S.fp.pitch=Math.max(-1.45,Math.min(1.45,S.fp.pitch-dy*0.005)); return; }
+    if(S.drag&&S.dragView===v&&S.sel>=0){ dragObject(v,e); }
+  });
+  window.addEventListener('mouseup',e=>{ if(e.button===2)v._look=null; if(e.button===0){S.drag=false;S.dragView=null;} });
+  cv.addEventListener('wheel',e=>{ e.preventDefault();
+    if(v.kind==='fp') S.fp.fov=Math.max(20,Math.min(100,S.fp.fov*(e.deltaY>0?1.06:0.94)));
+    else S.regionHalf=Math.max(2,Math.min(160,S.regionHalf*(e.deltaY>0?1.1:0.9)));
+  },{passive:false});
+}
+bindPane(VL); bindPane(VR);
+
+// ===== minimap =====
+function mmBounds(){
+  let xs=[],zs=[]; S.objects.forEach(o=>{xs.push(o.x);zs.push(o.z);});
+  if(S.navBounds){ xs.push(S.navBounds.minx,S.navBounds.maxx); zs.push(S.navBounds.minz,S.navBounds.maxz); }
+  if(xs.length<2){ const b=S.bounds; return {minx:b.min[0],maxx:b.max[0],minz:b.min[2],maxz:b.max[2]}; }
+  const cx=(Math.min(...xs)+Math.max(...xs))/2, cz=(Math.min(...zs)+Math.max(...zs))/2;
+  let half=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs))/2*1.15;
+  half=Math.max(half,3); return {minx:cx-half,maxx:cx+half,minz:cz-half,maxz:cz+half};
+}
+function drawMinimap(){
+  const c=$("mm"),x=c.getContext('2d'),W=c.width,H=c.height;
+  x.fillStyle='#0b0d11'; x.fillRect(0,0,W,H); if(!S.bounds)return;
+  const bb=mmBounds(), sx=(bb.maxx-bb.minx)||1, sz=(bb.maxz-bb.minz)||1;
+  const sc=Math.min(W/sx,H/sz), ox=(W-sx*sc)/2, oz=(H-sz*sc)/2;
+  const X=wx=>ox+(wx-bb.minx)*sc, Z=wz=>oz+(wz-bb.minz)*sc;
+  if(S.navmesh&&S.showNav){ const t=S.navmesh; x.beginPath();   // walkable area (single fill for speed)
+    for(let i=0;i<t.length;i+=9){ x.moveTo(X(t[i]),Z(t[i+2])); x.lineTo(X(t[i+3]),Z(t[i+5])); x.lineTo(X(t[i+6]),Z(t[i+8])); x.closePath(); }
+    x.fillStyle='rgba(57,217,138,0.22)'; x.fill(); }
+  if(S.showObjects) S.objects.forEach((o,i)=>{ x.fillStyle=(S.dropped&&S.dropped.has(i))?'#ff3b3b':colHex(o.cat); x.beginPath();
+    x.arc(X(o.x),Z(o.z),i===S.sel?5:3.2,0,7); x.fill(); if(i===S.sel){ x.strokeStyle='#ffe14d'; x.lineWidth=1.5; x.stroke(); } });
+  const hw=S.regionHalfEff||S.regionHalf; x.strokeStyle='#ffffff88'; x.lineWidth=1; x.strokeRect(X(S.fp.x-hw),Z(S.fp.z-hw),2*hw*sc,2*hw*sc);
+  const cxp=X(S.fp.x),czp=Z(S.fp.z); x.fillStyle='#fff'; x.beginPath(); x.arc(cxp,czp,3,0,7); x.fill();
+  x.strokeStyle='#fff'; x.lineWidth=1.5; x.beginPath(); x.moveTo(cxp,czp); x.lineTo(cxp+Math.sin(S.fp.yaw)*12,czp-Math.cos(S.fp.yaw)*12); x.stroke();
+}
+
+// ===== toolbar / modes =====
+function refresh(){ rebuildObjects(); updateStats(); }
+function updateStats(){
+  const by={}; S.objects.forEach(o=>by[o.cat]=(by[o.cat]||0)+1);
+  const parts=Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([c,n])=>c+':'+n);
+  $("stats").innerHTML='<b>'+S.objects.length+'</b> objects · '+(parts.join('  ')||'—');
+}
+function setMode(m){ S.mode=m; $("mPlace").classList.toggle('on',m==='place'); $("mSelect").classList.toggle('on',m==='select');
+  $("hint").textContent = m==='place'?'Place: click the ground to drop an object of the active category'
+    :'Select: click object to select · drag = move on ground · Shift+drag or [ ] = height · Alt-click / Del = delete'; }
+$("mPlace").onclick=()=>setMode('place'); $("mSelect").onclick=()=>setMode('select');
+$("clear").onclick=()=>{ if(!S.objects.length)return; pushHist(); S.objects=[]; S.sel=-1; refresh(); };
+$("hideObj").onclick=()=>{ S.showObjects=!S.showObjects; $("hideObj").textContent=(S.showObjects?'Hide':'Show')+' objects';
+  $("hideObj").classList.toggle('on',!S.showObjects); for(const v of VIEWS) v.input.visible=S.showObjects; };
+$("hideNav").onclick=()=>{ S.showNav=!S.showNav; $("hideNav").textContent=(S.showNav?'Hide':'Show')+' navmesh';
+  $("hideNav").classList.toggle('on',!S.showNav); for(const v of VIEWS) if(v.nav) v.nav.visible=S.showNav; };
+function setActive(cat){ S.activeCat=cat; setMode('place');
+  document.querySelectorAll('.chip').forEach(el=>el.classList.toggle('on',el.dataset.cat===cat));
+  $("active").textContent='placing: '+cat; }
+function buildPalette(cats){
+  cats.forEach((c,i)=>CATCOLOR[c]=PAL[i%PAL.length]);
+  const p=$("palette"); p.innerHTML='';
+  cats.forEach(c=>{ const el=document.createElement('div'); el.className='chip'; el.dataset.cat=c;
+    el.innerHTML='<span class="sw" style="background:'+colHex(c)+'"></span>'+c; el.onclick=()=>setActive(c); p.appendChild(el); });
+}
+// undo/redo
+function snap(){ return JSON.stringify(S.objects); }
+function pushHist(){ hist.push(snap()); if(hist.length>200)hist.shift(); fut.length=0; S.dropped=null; }
+function applyState(s){ S.objects=JSON.parse(s); S.sel=-1; S.drag=false; refresh(); }
+function undo(){ if(!hist.length){log('nothing to undo');return;} fut.push(snap()); applyState(hist.pop()); log('undo'); }
+function redo(){ if(!fut.length){log('nothing to redo');return;} hist.push(snap()); applyState(fut.pop()); log('redo'); }
+$("undo").onclick=undo; $("redo").onclick=redo;
+window.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&(e.key==='z'||e.key==='Z')){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if((e.ctrlKey||e.metaKey)&&(e.key==='y'||e.key==='Y')){ e.preventDefault(); redo(); return; }
+  if(/INPUT|SELECT/.test(document.activeElement.tagName)) return;
+  if(e.key==='p')setMode('place'); else if(e.key==='v')setMode('select');
+  else if(e.key==='Delete'||e.key==='Backspace'){ if(S.sel>=0){ pushHist(); S.objects.splice(S.sel,1); S.sel=-1; refresh(); } }
+  else if((e.key==='['||e.key===']')&&S.sel>=0){ pushHist(); S.objects[S.sel].y+=(e.key===']'?0.2:-0.2); refresh(); log('height '+S.objects[S.sel].y.toFixed(2)); }
+  keys.add(e.key); });
+window.addEventListener('keyup',e=>keys.delete(e.key));
+
+// ===== movement =====
+let prev=performance.now();
+function movement(dt){ if(/INPUT|SELECT/.test(document.activeElement.tagName))return;
+  const spd=4.0*dt,turn=1.4*dt,f=S.fp;
+  const fwd=new THREE.Vector3(Math.sin(f.yaw),0,-Math.cos(f.yaw)), right=new THREE.Vector3(Math.cos(f.yaw),0,Math.sin(f.yaw));
+  const k=ch=>keys.has(ch);
+  if(k('w')||k('W')){f.x+=fwd.x*spd;f.z+=fwd.z*spd;} if(k('s')||k('S')){f.x-=fwd.x*spd;f.z-=fwd.z*spd;}
+  if(k('a')||k('A')){f.x-=right.x*spd;f.z-=right.z*spd;} if(k('d')||k('D')){f.x+=right.x*spd;f.z+=right.z*spd;}
+  if(k('z')||k('Z'))f.y+=spd; if(k('x')||k('X'))f.y-=spd;
+  if(k('ArrowLeft'))f.yaw-=turn; if(k('ArrowRight'))f.yaw+=turn;
+  if(k('ArrowUp'))f.pitch=Math.min(1.45,f.pitch+turn); if(k('ArrowDown'))f.pitch=Math.max(-1.45,f.pitch-turn); }
+
+// ===== save =====
+async function save(){
+  if(!S.objects.length){ log('place some objects first'); return; }
+  if(!S.hasNavmesh){ log('this scene has no navmesh — build one with navmesh_editor first'); return; }
+  const btn=$("save"), lbl=btn.textContent; btn.disabled=true; btn.textContent='⏳ Generating…'; log('sampling view_points & generating episodes…');
+  const radius=+$("radius").value;
+  const objects=S.objects.map(o=>({category:o.cat, position:[o.x,o.y,o.z], radius}));
+  const params={radius, furthest:+$("furthest").value};
+  try{
+    const r=await (await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scene:S.scene,objects,params})})).json();
+    if(r.ok){ $("stats").innerHTML='saved <b>'+r.n_episodes+'</b> episodes · '+r.n_kept+'/'+r.n_objects+' kept · '
+        +Object.entries(r.categories).map(([c,n])=>c+':'+n).join('  ');
+      log('saved → '+r.path); markDropped(r.dropped);
+    } else { $("stats").textContent='generate failed'; log('failed: '+r.error); markDropped(r.dropped,r.error); }
+  }catch(err){ log('error: '+err); $("warn").textContent='⚠ '+err; }
+  btn.disabled=false; btn.textContent=lbl;
+}
+// flag unreachable objects in red (both views + minimap) and explain clearly in the warn bar
+function markDropped(dropped, err){
+  S.dropped = (dropped&&dropped.length) ? new Set(dropped.map(d=>d.i)) : null;
+  rebuildObjects();
+  if(dropped&&dropped.length){
+    const by={}; dropped.forEach(d=>by[d.category]=(by[d.category]||0)+1);
+    $("warn").textContent='⚠ '+dropped.length+' object(s) unreachable (red): '
+      +Object.entries(by).map(([c,n])=>c+'×'+n).join(', ')+' — move them onto the green navmesh, or raise "obj radius"';
+  } else $("warn").textContent = err ? ('⚠ '+err) : '';
+}
+$("save").onclick=save;
+function applyCam(v){ if(isNaN(+v))return; S.camHeight=+v; }
+$("cam").addEventListener('input',e=>{ applyCam(e.target.value); $("camNum").value=(+e.target.value).toFixed(2); });
+$("camNum").addEventListener('input',e=>{ applyCam(e.target.value); $("cam").value=e.target.value; });
+
+// ===== resize / loop =====
+function resize(){
+  for(const v of VIEWS){ const r=v.canvas.getBoundingClientRect();
+    v.renderer.setSize(r.width,r.height,false); v.camera.aspect=r.width/r.height; v.camera.updateProjectionMatrix();
+    if(v.navMat) v.navMat.resolution.set(r.width||1,r.height||1); }   // keep fat-line width correct on resize
+  const mm=$("mm"); const sz=Math.round(Math.max(120,Math.min(240,Math.min(innerWidth,innerHeight)*0.18)));
+  mm.width=sz; mm.height=sz; mm.style.width=sz+'px'; mm.style.height=sz+'px';
+}
+window.addEventListener('resize',resize);
+function loop(){ requestAnimationFrame(loop);
+  const now=performance.now(),dt=Math.min(0.05,(now-prev)/1000); prev=now;
+  movement(dt); updateFPCam(); updateTopCam();
+  VL.renderer.render(VL.scene,VL.camera); VR.renderer.render(VR.scene,VR.camera);
+  $("rinfo").textContent='region '+(2*(S.regionHalfEff||S.regionHalf)).toFixed(1)+' m · pos '+S.fp.x.toFixed(1)+','+S.fp.z.toFixed(1);
+  drawMinimap(); }
+
+// ===== scene load =====
+async function loadScenes(){ const r=await (await fetch('/api/scenes')).json();
+  buildPalette(r.categories);
+  const sel=$("scene"); sel.innerHTML='';
+  r.scenes.forEach(s=>{ const o=document.createElement('option'); o.value=s.name;
+    o.textContent=(s.has_annotations?'✎ ':'  ')+s.name+' ['+s.split+']'+(s.has_navmesh?'':' ⚠no-navmesh'); sel.appendChild(o); });
+  const want=new URLSearchParams(location.search).get('scene')||r.default; sel.value=want;
+  sel.onchange=()=>{ location.search='?scene='+encodeURIComponent(sel.value); };
+  setActive(r.categories[0]);
+  await loadScene(want); }
+async function loadScene(name){ showLoading(name);
+  const r=await (await fetch('/api/scene?name='+encodeURIComponent(name))).json();
+  if(r.error){ log(r.error); hideLoading(); return; }
+  S.scene=name; S.split=r.split; S.bounds=r.bounds; S.floorY=r.floor_y+0.1; S.ceilingY=(r.ceiling_y!=null)?r.ceiling_y:null;
+  S.hasNavmesh=r.has_navmesh; S.objects=[]; S.sel=-1; S.dropped=null; hist=[]; fut=[];
+  S.navmesh=(r.navmesh&&r.navmesh.tris_b64)?b64f32(r.navmesh.tris_b64):null; S.navBounds=null;
+  if(S.navmesh){ const t=S.navmesh; let a=1e9,b=-1e9,c=1e9,d=-1e9;
+    for(let i=0;i<t.length;i+=3){ if(t[i]<a)a=t[i]; if(t[i]>b)b=t[i]; if(t[i+2]<c)c=t[i+2]; if(t[i+2]>d)d=t[i+2]; }
+    S.navBounds={minx:a,maxx:b,minz:c,maxz:d}; }
+  $("warn").textContent = r.has_navmesh ? '' : '⚠ no navmesh — generation needs one (build it with navmesh_editor first)';
+  const cx=(r.bounds.min[0]+r.bounds.max[0])/2, cz=(r.bounds.min[2]+r.bounds.max[2])/2;
+  S.fp={x:cx,y:r.floor_y+1.6,z:cz,yaw:0,pitch:0,fov:70};
+  S.regionHalf=12; S.regionHalfEff=12;
+  const DEF_TOP_H=S.regionHalf/Math.tan(THREE.MathUtils.degToRad(TOP_FOV/2));
+  S.camHeight=(S.ceilingY!=null)?(S.ceilingY-CEIL_GAP):(S.floorY+DEF_TOP_H);
+  const cm=$("cam"),cn=$("camNum"); const camMax=(S.ceilingY!=null)?Math.max(S.ceilingY+1.5,S.floorY+4):(S.floorY+2*DEF_TOP_H);
+  cm.min=(S.floorY+0.3).toFixed(2); cm.max=camMax.toFixed(2); cm.value=S.camHeight.toFixed(2); cn.value=S.camHeight.toFixed(2);
+  $("cnt").textContent='('+r.n_splats.toLocaleString()+' splats)';
+  if(r.annotations&&r.annotations.objects){ S.objects=r.annotations.objects.map(o=>({cat:o.category,
+    x:o.position[0],y:o.position[1],z:o.position[2]}));
+    const src=r.annotations_source==='episodes'?'imported from existing episode file':'from saved sidecar';
+    log('loaded '+S.objects.length+' existing annotations ('+src+')'); }
+  ensureMarker(); resize(); rebuildNav(); rebuildObjects(); updateStats();
+  loadSplats(r.splat_url);
+  log('loaded '+name+' — '+r.n_splats.toLocaleString()+' splats · floor Y='+r.floor_y.toFixed(3)+(r.has_navmesh?'':' · NO NAVMESH')); }
+
+setMode('place'); await loadScenes(); loop();
+</script>
+</body>
+</html>

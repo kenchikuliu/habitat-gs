@@ -424,7 +424,7 @@ async function saveNavmesh(){
   try{
     const b=await (await fetch('/api/bake',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({scene:S.scene,polys,params:params()})})).json();
-    if(!b.ok){ log('failed: '+b.error); if(b.trace)console.log(b.trace); $("stats").textContent='generate failed'; }
+    if(!b.ok){ log('failed: '+b.error); if(b.trace)console.error(b.trace); $("stats").textContent='generate failed'; }
     else {
       S.baked=b64f32(b.tris_b64); rebuildNav();
       const s=await (await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},
