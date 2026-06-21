@@ -68,8 +68,7 @@
 <div class="bar" id="palette"></div>
 <div class="bar" id="bar2">
   <div class="g">
-    <button id="mPlace" class="on" title="Click the ground to place an object of the active category (key P)">📍 Place</button>
-    <button id="mSelect" title="Click an object to select/move; Alt-click or Del to delete (key V)">✋ Select / Move</button>
+    <button id="mPlaceMove" class="on" title="Click empty ground = place the active category &amp; select it · click an object = select it · drag = move · Shift+drag or [ ] = height · Alt-click or Del = delete">📍 Place / Move</button>
     <button id="clear">␥ Clear</button>
     <button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button>
     <button id="redo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
@@ -85,12 +84,12 @@
 
 <div id="main">
   <div class="pane" id="paneL">
-    <span class="tag">FP view — <b>WASD</b> move · <b>Z/X</b> up/down · <b>arrows</b> turn/look · <b>right-drag</b> look · <b>scroll</b> zoom · <b>left-click</b> place/select</span>
+    <span class="tag">FP view — <b>WASD</b> move · <b>Z/X</b> up/down · <b>arrows</b> turn/look · <b>right-drag</b> look · <b>scroll</b> zoom · <b>left-click</b> place / select · <b>drag</b> move</span>
     <canvas id="cvL" class="view"></canvas>
     <div class="err" id="errL"></div>
   </div>
   <div class="pane" id="paneR">
-    <span class="tag">Top-down (around you) — <b>scroll</b> zoom · <b>left-click</b> place/select</span>
+    <span class="tag">Top-down (around you) — <b>scroll</b> zoom · <b>left-click</b> place / select · <b>drag</b> move</span>
     <canvas id="cvR" class="view"></canvas>
     <canvas id="mm"></canvas>
     <div id="rinfo"></div>
@@ -138,7 +137,7 @@ const S = {
   scene:null, split:null, bounds:null, floorY:0, ceilingY:null, hasNavmesh:true,
   objects:[],                       // [{cat, x, y, z}]
   navmesh:null, navBounds:null, showNav:true, dropped:null,   // navmesh display + unreachable-object flags
-  activeCat:null, mode:'place', sel:-1, drag:false, dragView:null, dragDirty:false,
+  activeCat:null, sel:-1, drag:false, dragView:null, dragDirty:false,
   showObjects:true, camHeight:40,
   fp:{x:0,y:0,z:0,yaw:0,pitch:0,fov:70}, regionHalf:12, regionHalfEff:12,
 };
@@ -292,14 +291,15 @@ function bindPane(v){
     if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
     if(e.button===2 && v.kind==='fp'){ v._look={x:e.clientX,y:e.clientY}; return; }
     if(e.button!==0) return;
-    if(S.mode==='place'){ if(!S.activeCat){ log('pick a category first'); return; }
-      const w=screenToFloor(v,e); if(w){ pushHist(); S.objects.push({cat:S.activeCat,x:w[0],y:S.floorY+0.5,z:w[1]});
-        S.sel=S.objects.length-1; refresh(); } return; }
-    // select mode
+    // Unified Place/Move: click an existing object -> select it (then drag to move; Alt = delete);
+    // click empty ground -> place a new object of the active category and select it.
     const hi=hitObject(v,e);
     if(hi>=0){ if(e.altKey){ pushHist(); S.objects.splice(hi,1); S.sel=-1; refresh(); }
       else { S.sel=hi; S.drag=true; S.dragView=v; S.dragDirty=false; refresh(); } return; }
-    S.sel=-1; refresh();
+    if(!S.activeCat){ log('pick a category first'); return; }
+    const w=screenToFloor(v,e);
+    if(w){ pushHist(); S.objects.push({cat:S.activeCat,x:w[0],y:S.floorY+0.5,z:w[1]});
+      S.sel=S.objects.length-1; refresh(); }
   });
   window.addEventListener('mousemove',e=>{
     if(v.kind==='fp'&&v._look){ const dx=e.clientX-v._look.x,dy=e.clientY-v._look.y; v._look={x:e.clientX,y:e.clientY};
@@ -346,16 +346,15 @@ function updateStats(){
   const parts=Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([c,n])=>c+':'+n);
   $("stats").innerHTML='<b>'+S.objects.length+'</b> objects · '+(parts.join('  ')||'—');
 }
-function setMode(m){ S.mode=m; $("mPlace").classList.toggle('on',m==='place'); $("mSelect").classList.toggle('on',m==='select');
-  $("hint").textContent = m==='place'?'Place: click the ground to drop an object of the active category'
-    :'Select: click object to select · drag = move on ground · Shift+drag or [ ] = height · Alt-click / Del = delete'; }
-$("mPlace").onclick=()=>setMode('place'); $("mSelect").onclick=()=>setMode('select');
+// Single unified tool — click empty ground places, click an object selects, drag moves.
+const HINT='Click empty ground = place · click an object = select · drag = move · Shift+drag or [ ] = height · Alt-click / Del = delete';
+$("mPlaceMove").onclick=()=>{ $("hint").textContent=HINT; };
 $("clear").onclick=()=>{ if(!S.objects.length)return; pushHist(); S.objects=[]; S.sel=-1; refresh(); };
 $("hideObj").onclick=()=>{ S.showObjects=!S.showObjects; $("hideObj").textContent=(S.showObjects?'Hide':'Show')+' objects';
   $("hideObj").classList.toggle('on',!S.showObjects); for(const v of VIEWS) v.input.visible=S.showObjects; };
 $("hideNav").onclick=()=>{ S.showNav=!S.showNav; $("hideNav").textContent=(S.showNav?'Hide':'Show')+' navmesh';
   $("hideNav").classList.toggle('on',!S.showNav); for(const v of VIEWS) if(v.nav) v.nav.visible=S.showNav; };
-function setActive(cat){ S.activeCat=cat; setMode('place');
+function setActive(cat){ S.activeCat=cat; $("hint").textContent=HINT;
   document.querySelectorAll('.chip').forEach(el=>el.classList.toggle('on',el.dataset.cat===cat));
   $("active").textContent='placing: '+cat; }
 function buildPalette(cats){
@@ -375,8 +374,7 @@ window.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&(e.key==='z'||e.key==='Z')){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
   if((e.ctrlKey||e.metaKey)&&(e.key==='y'||e.key==='Y')){ e.preventDefault(); redo(); return; }
   if(/INPUT|SELECT/.test(document.activeElement.tagName)) return;
-  if(e.key==='p')setMode('place'); else if(e.key==='v')setMode('select');
-  else if(e.key==='Delete'||e.key==='Backspace'){ if(S.sel>=0){ pushHist(); S.objects.splice(S.sel,1); S.sel=-1; refresh(); } }
+  if(e.key==='Delete'||e.key==='Backspace'){ if(S.sel>=0){ pushHist(); S.objects.splice(S.sel,1); S.sel=-1; refresh(); } }
   else if((e.key==='['||e.key===']')&&S.sel>=0){ pushHist(); S.objects[S.sel].y+=(e.key===']'?0.2:-0.2); refresh(); log('height '+S.objects[S.sel].y.toFixed(2)); }
   keys.add(e.key); });
 window.addEventListener('keyup',e=>keys.delete(e.key));
@@ -478,7 +476,7 @@ async function loadScene(name){ showLoading(name);
   loadSplats(r.splat_url);
   log('loaded '+name+' — '+r.n_splats.toLocaleString()+' splats · floor Y='+r.floor_y.toFixed(3)+(r.has_navmesh?'':' · NO NAVMESH')); }
 
-setMode('place'); await loadScenes(); loop();
+await loadScenes(); loop();
 </script>
 </body>
 </html>
