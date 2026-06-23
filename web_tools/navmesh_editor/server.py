@@ -157,8 +157,10 @@ def prepare_scene(ply_path):
     else:
         a = np.ones(n, np.float32)
 
-    # prune: drop faint gaussians, then cap to the most-opaque MAX_SPLATS
-    idx = np.nonzero(a > SPLAT_ALPHA_MIN)[0]
+    # prune: drop faint AND non-finite gaussians, then cap to the most-opaque MAX_SPLATS.
+    # (some scenes have NaN/Inf-position floaters that would poison the scene bounds ->
+    # NaN camera -> blank render in the browser.)
+    idx = np.nonzero((a > SPLAT_ALPHA_MIN) & np.isfinite(xyz).all(axis=1))[0]
     if len(idx) > MAX_SPLATS:
         idx = idx[np.argpartition(a[idx], -MAX_SPLATS)[-MAX_SPLATS:]]
 
@@ -193,7 +195,7 @@ def prepare_scene(ply_path):
 
     meta = {"name": name, "split": split, "splat": splat,
             "n_splats": int(len(idx)), "n_total": int(n),
-            "bounds": {"min": xyz.min(0).tolist(), "max": xyz.max(0).tolist()},
+            "bounds": {"min": xyz[idx].min(0).tolist(), "max": xyz[idx].max(0).tolist()},
             "floor_y": fy, "ceiling_y": ceiling_y, "suggested": suggested}
     _scene_cache[ply_path] = meta
     return meta

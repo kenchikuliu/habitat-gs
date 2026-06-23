@@ -205,7 +205,9 @@ def prepare_scene(ply_path):
     names = v.data.dtype.names or ()
     xyz = np.column_stack([v["x"], v["y"], v["z"]]).astype(np.float32, copy=False)
     a = (1.0 / (1.0 + np.exp(-np.asarray(v["opacity"], np.float32)))) if "opacity" in names else np.ones(n, np.float32)
-    idx = np.nonzero(a > SPLAT_ALPHA_MIN)[0]
+    # keep faint-pruned AND finite gaussians (some scenes have NaN/Inf-position floaters that
+    # would otherwise poison the scene bounds -> NaN camera -> blank render in the browser)
+    idx = np.nonzero((a > SPLAT_ALPHA_MIN) & np.isfinite(xyz).all(axis=1))[0]
     if len(idx) > MAX_SPLATS:
         idx = idx[np.argpartition(a[idx], -MAX_SPLATS)[-MAX_SPLATS:]]
     dc = np.column_stack([v["f_dc_0"][idx], v["f_dc_1"][idx], v["f_dc_2"][idx]]).astype(np.float32)
@@ -230,7 +232,7 @@ def prepare_scene(ply_path):
     fy, ceiling_y = floor_ceiling_estimate(xyz[idx, 1])
     meta = {"name": name, "split": split, "splat": splat,
             "n_splats": int(len(idx)), "n_total": int(n),
-            "bounds": {"min": xyz.min(0).tolist(), "max": xyz.max(0).tolist()},
+            "bounds": {"min": xyz[idx].min(0).tolist(), "max": xyz[idx].max(0).tolist()},
             "floor_y": fy, "ceiling_y": ceiling_y}
     _scene_cache[ply_path] = meta
     return meta
