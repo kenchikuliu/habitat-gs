@@ -1,9 +1,9 @@
 ---
-name: habitat-gs
-description: Control a robot in 3D Gaussian Splatting indoor environments. Load scenes, navigate, observe with RGB/depth, and export video.
+name: habitat-gs-control
+description: Interactively pilot a robot in habitat-gs 3D Gaussian Splatting indoor scenes via MCP tools — load a scene, move, observe with RGB/depth, run autonomous nav loops, and export video. Use for hands-on control of a live sim session, NOT for training or evaluating a navigation policy (use the habitat-gs-train skill for that).
 ---
 
-# habitat-gs
+# habitat-gs-control
 
 Control a robot navigating through photo-realistic 3D indoor environments. You have MCP tools for scene loading, movement, observation, and autonomous navigation.
 

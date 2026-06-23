@@ -91,7 +91,7 @@ def _artifacts_dir() -> str:
 #
 # Phase 2 PR 4 dynamic registration originally returned `result.body`
 # verbatim, which silently broke external MCP clients (and the
-# `skills/habitat-gs/` reference docs) that read fields like
+# `skills/habitat-gs-control/` reference docs) that read fields like
 # `result["images"]` or `result["scene_info"]` produced by the legacy
 # hand-written `@mcp.tool()` functions. The shapers below restore
 # those exact shapes so any pre-Phase-2 MCP integration keeps working.

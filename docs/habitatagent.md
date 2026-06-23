@@ -374,27 +374,32 @@ The full authoritative schema is what `describe_api` returns at runtime — use 
 
 ### Agent Skill
 
-The habitat-gs skill lives in [`skills/habitat-gs`](skills/habitat-gs) and provides behavior instructions for MCP-compatible agent clients (OpenClaw, Claude Code, Codex, etc.).
+This repo ships two skills under [`skills/`](skills):
 
-Use the skill manager to install/uninstall:
+| Skill | Purpose |
+|---|---|
+| [`habitat-gs-control`](skills/habitat-gs-control) | Behavior instructions for MCP-compatible agent clients (OpenClaw, Claude Code, Codex, etc.) to interactively pilot a live sim |
+| [`habitat-gs-train`](skills/habitat-gs-train) | Guidance for training and evaluating a navigation policy (PointNav/ImageNav/ObjectNav RL, StreamVLN, Uni-NaVid) |
+
+Use the skill manager to install/uninstall. Without `--skill` it processes **all** shipped skills; pass `--skill NAME` to act on one:
 
 ```bash
-# Default: copy the skill files into the workspace (safe, no cross-host issues)
+# Default: copy all skill files into the workspace (safe, no cross-host issues)
 tools/manage_habitat_gs_skill.sh install --workspace /path/to/agent/workspace
 
-# Alternative: symlink the skill files (only safe if the symlink target is
-# visible to the agent process, e.g. not when the agent runs in Docker)
-tools/manage_habitat_gs_skill.sh install --workspace /path/to/agent/workspace --mode symlink
+# Only the interactive-control skill, via symlink (only safe if the symlink target
+# is visible to the agent process, e.g. not when the agent runs in Docker)
+tools/manage_habitat_gs_skill.sh install --workspace /path/to/agent/workspace --skill habitat-gs-control --mode symlink
 
 tools/manage_habitat_gs_skill.sh status    --workspace /path/to/agent/workspace
 tools/manage_habitat_gs_skill.sh uninstall --workspace /path/to/agent/workspace
 ```
 
-`install` only copies or symlinks the skill files; it does **not** auto-create the per-workspace `.env`. Do that once after install:
+`install` only copies or symlinks the skill files; it does **not** auto-create a per-workspace `.env`. If a skill ships an `.env.example`, copy it once after install:
 
 ```bash
-cp /path/to/agent/workspace/skills/habitat-gs/.env.example \
-   /path/to/agent/workspace/skills/habitat-gs/.env
+cp /path/to/agent/workspace/skills/habitat-gs-control/.env.example \
+   /path/to/agent/workspace/skills/habitat-gs-control/.env
 # Then edit the copy to point at your bridge host / API key
 ```
 

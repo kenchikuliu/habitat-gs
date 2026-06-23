@@ -82,6 +82,7 @@ Compared with traditional mesh-based simulators, Habitat-GS can achieve photo-re
   - 🗺️ [Point/Image/Object Goal Navigation on Habitat-Lab](#%EF%B8%8F-pointimageobject-goal-navigation-on-habitat-lab)
   - 🗣️ [Vision-and-Language Navigation with StreamVLN](#%EF%B8%8F-vision-and-language-navigation-with-streamvln)
   - ✈️ [Vision-and-Language Navigation with Uni-NaVid](#%EF%B8%8F-vision-and-language-navigation-with-uni-navid)
+- 🧩 [Agent Skills](#-agent-skills)
 - 📚 [Citation](#-citation)
 
 ## 🛠️ Install Habitat-GS
@@ -923,6 +924,24 @@ bash scripts_gs/eval_uninavid.sh --ckpt output/uninavid_gs/<checkpoint>
 The evaluator reports: Success Rate (SR), SPL, Oracle Success (OSR), and Distance-to-Goal (DTG).
 
 </details>
+
+## 🧩 Agent Skills
+
+We ship two [Agent Skills](skills) that let a coding agent (Claude Code, Codex, OpenClaw, etc.) drive Habitat-GS without re-reading the whole repo:
+
+| Skill | What it helps an agent do |
+|---|---|
+| [`skills/habitat-gs-control`](skills/habitat-gs-control) | Interactively pilot a robot in a live GS sim via the MCP tools (load a scene, move, observe RGB/depth, run autonomous nav loops, export video). Pairs with the [HabitatAgent](#-habitatagent) MCP server. |
+| [`skills/habitat-gs-train`](skills/habitat-gs-train) | Quickly train and evaluate a navigation policy in Habitat-GS simulation environment, the full generate → train → evaluate flow for PointNav/ImageNav/ObjectNav and for VLN (StreamVLN, Uni-NaVid). |
+
+Install them into an agent's workspace with the skill manager:
+
+```bash
+tools/manage_habitat_gs_skill.sh install --workspace /path/to/agent/workspace
+tools/manage_habitat_gs_skill.sh status  --workspace /path/to/agent/workspace
+```
+
+See [docs/habitatagent.md](docs/habitatagent.md#agent-skill) for more details.
 
 ## 📚 Citation
 
