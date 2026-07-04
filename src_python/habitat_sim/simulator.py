@@ -231,8 +231,12 @@ class Simulator(SimulatorBackend):
         self._sanitize_config(config)
 
         if self.config != config:
-            self.__set_from_config(config)
+            # Assign before applying: __set_from_config resolves scene-dependent
+            # state (e.g. the gaussian-avatar scene_instance) through self.config,
+            # which must already point at the new scene — matching __init__, where
+            # attrs sets self.config before __set_from_config runs.
             self.config = config
+            self.__set_from_config(config)
 
     def __set_from_config(self, config: Configuration) -> None:
         self._config_backend(config)

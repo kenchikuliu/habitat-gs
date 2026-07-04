@@ -82,6 +82,7 @@ Compared with traditional mesh-based simulators, Habitat-GS can achieve photo-re
   - 🗺️ [Point/Image/Object Goal Navigation on Habitat-Lab](#%EF%B8%8F-pointimageobject-goal-navigation-on-habitat-lab)
   - 🗣️ [Vision-and-Language Navigation with StreamVLN](#%EF%B8%8F-vision-and-language-navigation-with-streamvln)
   - ✈️ [Vision-and-Language Navigation with Uni-NaVid](#%EF%B8%8F-vision-and-language-navigation-with-uni-navid)
+  - 🚶 [Dynamic Navigation with Gaussian Avatars](#-dynamic-navigation-with-gaussian-avatars)
 - 🧩 [Agent Skills](#-agent-skills)
 - 📚 [Citation](#-citation)
 
@@ -135,9 +136,11 @@ pip install -e habitat-lab
 pip install -e habitat-baselines
 ```
 
+> **NOTE**: The [dynamic navigation tasks](#-dynamic-navigation-with-gaussian-avatars) (avatar avoidance / tracking) require our **[own habitat-lab fork](https://github.com/RukawaY/habitat-lab-dynamic)**. In that case, clone with `git clone https://github.com/RukawaY/habitat-lab-dynamic.git` and then do the same edit/installation.
+
 ## 📦 Download GS Asset
 
-Please refer to our 🤗 [huggingface dataset](https://huggingface.co/datasets/RukawaY/gs_scenes) for more details. We provide five categories of assets:
+Please refer to our 🤗 [huggingface dataset](https://huggingface.co/datasets/RukawaY/gs_scenes) for more details. We provide six categories of assets:
 
 |   | Category | Size | Required For |
 |---|----------|------|-------------|
@@ -146,6 +149,7 @@ Please refer to our 🤗 [huggingface dataset](https://huggingface.co/datasets/R
 | 3 | **Habitat-Lab Nav Data** | ~30 MB | PointNav / ImageNav / ObjectNav training & evaluation |
 | 4 | **StreamVLN Data** | ~40 GB | VLN training & evaluation ([StreamVLN](https://github.com/InternRobotics/StreamVLN)) |
 | 5 | **Uni-NaVid Data** | ~25 GB | VLN training & evaluation ([Uni-NaVid](https://github.com/jzhzhang/Uni-NaVid)) |
+| 6 | **Dynamic Nav Data** | ~25 MB | Dynamic navigation (avatar avoidance & tracking) training & evaluation |
 
 ## 🚀 Run Habitat-GS
 
@@ -924,6 +928,91 @@ bash scripts_gs/eval_uninavid.sh --ckpt output/uninavid_gs/<checkpoint>
 The evaluator reports: Success Rate (SR), SPL, Oracle Success (OSR), and Distance-to-Goal (DTG).
 
 </details>
+
+### 🚶 Dynamic Navigation with Gaussian Avatars
+
+We provide **one-click** training and evaluation pipelines for dynamic navigation tasks on 10 sample scenes, where a gaussian avatar walks a GAMMA-generated trajectory through each scene. In the three *avoidance* tasks the avatar is a moving obstacle during navigation, while in the *tracking* task the avatar is the tracking target.
+
+| Task | `--task` | Goal | Avatar Role |
+|------|----------|------|-------------|
+| **Dynamic PointNav** | `avoid` | GPS coordinates | moving obstacle |
+| **Dynamic ImageNav** | `avoid_imagenav` | Goal image | moving obstacle |
+| **Dynamic ObjectNav** | `avoid_objectnav` | Object category | moving obstacle |
+| **Human Tracking** | `track` | Follow the walking avatar | target |
+
+#### Prerequisites
+
+- **[Our habitat-lab fork](https://github.com/RukawaY/habitat-lab-dynamic)** installed (see [Install Habitat-Lab](#-install-habitat-lab-optional-but-recommended))
+- GS scenes, gaussian avatars, SMPL-X body models and **Dynamic Nav Data** placed under `data/scene_datasets/gs_scenes/`
+- `GAMMA` conda environment installed (see [Prepare GS Assets](#-prepare-gs-assets))
+
+#### Data Layout
+
+<details>
+<summary>Click to expand: dynamic-nav files added on top of the base dataset layout:</summary>
+
+```
+data/scene_datasets/gs_scenes/
+├── configs/
+│   ├── ddppo_dynamic_track_gs_{train,eval}.yaml            # tracking
+│   ├── ddppo_dynamic_avoid_gs_{train,eval}.yaml            # dynamic PointNav
+│   ├── ddppo_dynamic_avoid_imagenav_gs_{train,eval}.yaml   # dynamic ImageNav
+│   └── ddppo_dynamic_avoid_objectnav_gs_{train,eval}.yaml  # dynamic ObjectNav
+└── dynamic_nav/                         # 10 scenes (scene01–scene10), one walking avatar each
+    ├── dynamic_nav.scene_dataset_config.json
+    ├── scenes/<scene>.scene_instance.json      # stage + navmesh + gaussian_avatars wiring
+    ├── stages/<scene>.stage_config.json
+    ├── trajectories/<scene>.driver.pkl         # GAMMA walk (joint_mats + proxy_capsules)
+    ├── episodes/{train,val}/                   # PointNav format: 1,000 train + 100 val
+    │                                           #   (shared by avoid / avoid_imagenav / track)
+    └── episodes_objectnav/{train,val}/         # ObjectNav format: 1,000 train + 100 val
+```
+
+</details>
+
+#### Step 1: Generate Episodes
+
+Dynamic-nav data for the 10 sample scenes above is included in the released dataset. To generate for new scenes or different avatar/trajectory choices:
+
+```bash
+conda activate habitat-gs
+
+# --scenes takes any scene names; --avatars gives the avatar id per scene
+# (or a single id for all). E.g. to reproduce the released 10-scene data:
+python scripts_gs/generate_dynamic_nav.py \
+    --scenes scene01 scene02 scene03 scene04 scene05 scene06 scene07 scene08 scene09 scene10 \
+    --avatars 2 1 6 3 2 1 6 3 4 6
+
+# ObjectNav episodes: retargets the annotated ObjectNav episodes onto the dynamic scenes
+python scripts_gs/generate_dynamic_objectnav.py \
+    --scenes scene01 scene02 scene03 scene04 scene05 scene06 scene07 scene08 scene09 scene10
+```
+
+#### Step 2: Train
+
+```bash
+bash scripts_gs/train_dynamic_nav.sh --task avoid           --output output/dyn_pointnav
+bash scripts_gs/train_dynamic_nav.sh --task avoid_imagenav  --output output/dyn_imagenav
+bash scripts_gs/train_dynamic_nav.sh --task avoid_objectnav --output output/dyn_objectnav
+bash scripts_gs/train_dynamic_nav.sh --task track           --output output/dyn_track
+```
+
+The scripts accept the same options as the static pipelines (`--num-envs`, `--num-gpus`, `--total-steps`, `--num-ckpts`, `--pretrained-ckpt`, plus Hydra overrides).
+
+Since tracking is hard for from-scratch RL, we additionally provide a **DAgger** trainer that distills a geometric follower into a deployable tracking policy:
+
+```bash
+python scripts_gs/train_dynamic_nav_dagger.py output/dyn_track_dagger 90000
+```
+
+#### Step 3: Evaluate
+
+```bash
+bash scripts_gs/eval_dynamic_nav.sh --task avoid --ckpt output/dyn_pointnav/checkpoints/latest.pth
+# ... same for avoid_imagenav / avoid_objectnav / track
+```
+
+Besides the standard task metrics (Success, SPL, Distance-to-Goal for avoidance; `track_rate`, `tracknav_success` for tracking), all four tasks report per-episode avatar interaction metrics: `avatar_proxy_collision_count` and `avatar_proxy_intrusion`.
 
 ## 🧩 Agent Skills
 
