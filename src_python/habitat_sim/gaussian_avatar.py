@@ -6,7 +6,7 @@ import json
 import math
 import os
 import pickle
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -239,6 +239,79 @@ def _matrix_to_quat(matrix: torch.Tensor) -> torch.Tensor:
     return _normalize_quat(quat)
 
 
+# NumPy twins of the quaternion helpers above, used by the kernel-free fast
+# update path. They must implement the exact same float32 math so both paths
+# stay numerically interchangeable (see tests_gs/test_gaussian_avatar_update.py).
+def _np_normalize_quat(q: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(q, axis=-1, keepdims=True)
+    return q / np.maximum(norm, np.float32(1e-8))
+
+
+def _np_nlerp_quat(q0: np.ndarray, q1: np.ndarray, weight: float) -> np.ndarray:
+    dot = (q0 * q1).sum(axis=-1, keepdims=True)
+    q1 = np.where(dot < 0.0, -q1, q1)
+    q = q0 + (q1 - q0) * np.float32(weight)
+    return _np_normalize_quat(q)
+
+
+def _np_quat_to_matrix(q: np.ndarray) -> np.ndarray:
+    q = _np_normalize_quat(q)
+    x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    m00 = 1.0 - 2.0 * (yy + zz)
+    m01 = 2.0 * (xy - wz)
+    m02 = 2.0 * (xz + wy)
+    m10 = 2.0 * (xy + wz)
+    m11 = 1.0 - 2.0 * (xx + zz)
+    m12 = 2.0 * (yz - wx)
+    m20 = 2.0 * (xz - wy)
+    m21 = 2.0 * (yz + wx)
+    m22 = 1.0 - 2.0 * (xx + yy)
+
+    rows = np.stack(
+        [
+            np.stack([m00, m01, m02], axis=-1),
+            np.stack([m10, m11, m12], axis=-1),
+            np.stack([m20, m21, m22], axis=-1),
+        ],
+        axis=-2,
+    )
+    return rows.astype(np.float32, copy=False)
+
+
+def _np_matrix_to_quat(matrix: np.ndarray) -> np.ndarray:
+    m00 = matrix[..., 0, 0]
+    m11 = matrix[..., 1, 1]
+    m22 = matrix[..., 2, 2]
+    m01 = matrix[..., 0, 1]
+    m02 = matrix[..., 0, 2]
+    m10 = matrix[..., 1, 0]
+    m12 = matrix[..., 1, 2]
+    m20 = matrix[..., 2, 0]
+    m21 = matrix[..., 2, 1]
+
+    qw = np.sqrt(np.clip(1.0 + m00 + m11 + m22, 0.0, None)) * 0.5
+    qx = np.sqrt(np.clip(1.0 + m00 - m11 - m22, 0.0, None)) * 0.5
+    qy = np.sqrt(np.clip(1.0 - m00 + m11 - m22, 0.0, None)) * 0.5
+    qz = np.sqrt(np.clip(1.0 - m00 - m11 + m22, 0.0, None)) * 0.5
+
+    qx = np.copysign(qx, m21 - m12)
+    qy = np.copysign(qy, m02 - m20)
+    qz = np.copysign(qz, m10 - m01)
+
+    quat = np.stack([qx, qy, qz, qw], axis=-1).astype(np.float32, copy=False)
+    return _np_normalize_quat(quat)
+
+
 def _build_transform(pos: torch.Tensor, quat: torch.Tensor) -> torch.Tensor:
     rot = _quat_to_matrix(quat)
     t = torch.eye(4, device=pos.device, dtype=pos.dtype)
@@ -279,7 +352,9 @@ def _interp_indices(frame_pos: float, num_frames: int) -> Tuple[int, int, float]
 
 
 def _compute_avatar_world_bounds(
-    joint_mats: torch.Tensor, proxy_capsules: np.ndarray, padding: float
+    joint_mats: Union[torch.Tensor, np.ndarray],
+    proxy_capsules: np.ndarray,
+    padding: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
     if proxy_capsules.size:
         p0 = proxy_capsules[:, :3]
@@ -287,8 +362,12 @@ def _compute_avatar_world_bounds(
         radii = proxy_capsules[:, 6:7]
         bounds_min = (np.minimum(p0, p1) - radii).min(axis=0)
         bounds_max = (np.maximum(p0, p1) + radii).max(axis=0)
-    else:
+    elif isinstance(joint_mats, np.ndarray):
         # Fallback when no proxy capsules are available in the driver stream.
+        joint_positions = joint_mats[:, :3, 3]
+        bounds_min = joint_positions.min(axis=0)
+        bounds_max = joint_positions.max(axis=0)
+    else:
         joint_positions = joint_mats[:, :3, 3]
         bounds_min = torch.amin(joint_positions, dim=0).detach().cpu().numpy()
         bounds_max = torch.amax(joint_positions, dim=0).detach().cpu().numpy()
@@ -477,6 +556,18 @@ class GaussianAvatar:
         self.precomputed_joint_fps: float = 0.0
         self.precomputed_joint_space: str = ""
         self.precomputed_joint_version: int = 0
+        # Fast-path state: numpy mirrors of the driver joint matrices (plus
+        # per-frame rotation quaternions) and persistent upload buffers, so a
+        # per-step update is vectorized numpy + one small H2D copy instead of
+        # a chain of tiny CUDA kernels launched from python.
+        self._np_joint_mats: Optional[np.ndarray] = None
+        self._np_joint_quats: Optional[np.ndarray] = None
+        self._joint_mats_gpu: Optional[torch.Tensor] = None
+        self._joint_mats_pinned: Optional[torch.Tensor] = None
+        self._upload_event: Optional["torch.cuda.Event"] = None
+        self._coord_transform_np: Optional[np.ndarray] = None
+        self._coord_transform_np_src: Optional[torch.Tensor] = None
+        self._last_joint_mats: Optional[np.ndarray] = None
 
         if not self.smpl_type:
             self.joint_count = _load_joint_count(self.canonical_gaussians_path)
@@ -786,6 +877,8 @@ class GaussianAvatar:
             .to(self.device)
             .contiguous()
         )
+        self._np_joint_mats = np.ascontiguousarray(joint_mats_np, dtype=np.float32)
+        self._np_joint_quats = _np_matrix_to_quat(self._np_joint_mats[:, :, :3, :3])
         self.precomputed_joint_count = int(joint_mats_np.shape[1])
         self.precomputed_joint_fps = float(joint_mats_fps)
         self.precomputed_joint_space = str(joint_mats_space)
@@ -952,6 +1045,41 @@ class GaussianAvatar:
         out[:, 3, 3] = 1.0
         return out.contiguous()
 
+    def _sample_precomputed_joint_mats_np(self, frame_pos: float) -> np.ndarray:
+        """NumPy twin of :meth:`_sample_precomputed_joint_mats` (same math,
+        same clone-vs-interpolate branching), returning an owned array."""
+        if self._np_joint_mats is None:
+            raise RuntimeError("Precomputed joint_mats are not initialized.")
+
+        idx0, idx1, weight = _interp_indices(frame_pos, self._np_joint_mats.shape[0])
+        mats0 = self._np_joint_mats[idx0]
+        if idx1 == idx0 or weight <= 0.0:
+            return mats0.copy()
+        if weight >= 1.0:
+            return self._np_joint_mats[idx1].copy()
+
+        mats1 = self._np_joint_mats[idx1]
+        trans = mats0[:, :3, 3] + (mats1[:, :3, 3] - mats0[:, :3, 3]) * np.float32(weight)
+        quat = _np_nlerp_quat(
+            self._np_joint_quats[idx0], self._np_joint_quats[idx1], weight
+        )
+        out = np.zeros_like(mats0)
+        out[:, :3, :3] = _np_quat_to_matrix(quat)
+        out[:, :3, 3] = trans
+        out[:, 3, 3] = 1.0
+        return out
+
+    def _coord_transform_as_np(self) -> Optional[np.ndarray]:
+        ct = self.coord_transform
+        if ct is None:
+            return None
+        if self._coord_transform_np is None or self._coord_transform_np_src is not ct:
+            self._coord_transform_np = (
+                ct.detach().cpu().numpy().astype(np.float32, copy=False)
+            )
+            self._coord_transform_np_src = ct
+        return self._coord_transform_np
+
     def _sample_trajectory(self, frame_pos: float) -> Tuple[torch.Tensor, torch.Tensor]:
         idx0, idx1, weight = _interp_indices(frame_pos, self.traj_pos.shape[0])
         pos = self.traj_pos[idx0]
@@ -1028,7 +1156,10 @@ class GaussianAvatar:
         return self._proxy_capsules
 
     def _update_render_bounds(
-        self, sim, joint_mats: torch.Tensor, proxy_capsules: np.ndarray
+        self,
+        sim,
+        joint_mats: Union[torch.Tensor, np.ndarray],
+        proxy_capsules: np.ndarray,
     ) -> None:
         if self._bounds_update_failed:
             return
@@ -1070,6 +1201,113 @@ class GaussianAvatar:
         if not active:
             self._remove_physics_proxy(sim)
 
+    def _check_joint_count(self, joint_count: int) -> None:
+        if (
+            self.precomputed_joint_count > 0
+            and joint_count != self.precomputed_joint_count
+        ):
+            raise RuntimeError(
+                "Precomputed joint_mats joint count mismatch: "
+                f"{joint_count} vs {self.precomputed_joint_count}."
+            )
+        if self.joint_count is not None and joint_count != self.joint_count:
+            if not self._joint_count_warned:
+                logger.warning(
+                    "GaussianAvatar %s joint count mismatch: expected %d, got %d.",
+                    self.name,
+                    self.joint_count,
+                    joint_count,
+                )
+                self._joint_count_warned = True
+
+    def _update_fast(self, sim, frame_pos: float) -> bool:
+        """Kernel-free per-step update for driver-only avatars (no trajectory):
+        the whole scale/coord/offset pipeline runs as vectorized numpy on
+        [J,4,4] and the result reaches the renderer through one small H2D copy
+        into a persistent CUDA buffer. Numerically mirrors the torch path in
+        :meth:`update` step for step."""
+        joint_mats = self._sample_precomputed_joint_mats_np(frame_pos)
+        proxy_capsules = self._sample_precomputed_proxy_capsules(frame_pos)
+        self._check_joint_count(joint_mats.shape[0])
+
+        if self.scale != 1.0:
+            scale = np.float32(self.scale)
+            root_t = joint_mats[0, :3, 3].copy()
+            joint_mats[:, :3, :3] *= scale
+            joint_mats[:, :3, 3] = (
+                joint_mats[:, :3, 3] * scale + np.float32(1.0 - self.scale) * root_t
+            )
+            if proxy_capsules.size:
+                proxy_capsules = proxy_capsules.copy()
+                proxy_capsules[:, :3] = (
+                    root_t + (proxy_capsules[:, :3] - root_t) * self.scale
+                )
+                proxy_capsules[:, 3:6] = (
+                    root_t + (proxy_capsules[:, 3:6] - root_t) * self.scale
+                )
+                proxy_capsules[:, 6] *= self.scale
+
+        coord_transform = self._coord_transform_as_np()
+        if coord_transform is not None:
+            joint_mats = np.matmul(coord_transform, joint_mats)
+        if self.offset_y != 0.0:
+            joint_mats[:, 1, 3] += np.float32(self.offset_y)
+
+        if proxy_capsules.size:
+            if coord_transform is not None:
+                proxy_capsules = proxy_capsules.copy()
+                rot = coord_transform[:3, :3]
+                trans = coord_transform[:3, 3]
+                proxy_capsules[:, :3] = (rot @ proxy_capsules[:, :3].T).T + trans
+                proxy_capsules[:, 3:6] = (rot @ proxy_capsules[:, 3:6].T).T + trans
+            if self.offset_y != 0.0:
+                proxy_capsules = proxy_capsules.copy()
+                proxy_capsules[:, 1] += self.offset_y
+                proxy_capsules[:, 4] += self.offset_y
+        self._proxy_capsules = proxy_capsules
+        self._update_render_bounds(sim, joint_mats, proxy_capsules)
+
+        joint_mats = np.ascontiguousarray(joint_mats, dtype=np.float32)
+        self._last_joint_mats = joint_mats
+        if (
+            self._joint_mats_gpu is None
+            or self._joint_mats_gpu.shape != joint_mats.shape
+        ):
+            self._joint_mats_gpu = torch.empty(
+                joint_mats.shape, dtype=torch.float32, device=self.device
+            )
+            try:
+                self._joint_mats_pinned = torch.empty(
+                    joint_mats.shape, dtype=torch.float32, pin_memory=True
+                )
+            except RuntimeError:
+                self._joint_mats_pinned = torch.empty(
+                    joint_mats.shape, dtype=torch.float32
+                )
+            self._upload_event = torch.cuda.Event()
+        # The staging buffer may still be feeding last update's async H2D
+        # (device-side cudaMemcpy is async w.r.t. the host) — wait for that
+        # copy before rewriting it. No-op when the copy already completed.
+        self._upload_event.synchronize()
+        self._joint_mats_pinned.copy_(torch.from_numpy(joint_mats))
+        # Issue the H2D on the LEGACY default stream: the renderer consumes
+        # the buffer via a NULL-stream cudaMemcpy D2D, which is only ordered
+        # after this copy if the copy is on that same stream (a caller-set
+        # torch side stream would not synchronize with the NULL stream).
+        default_stream = torch.cuda.default_stream(self._joint_mats_gpu.device)
+        with torch.cuda.stream(default_stream):
+            self._joint_mats_gpu.copy_(self._joint_mats_pinned, non_blocking=True)
+            self._upload_event.record(default_stream)
+
+        if self.sync_cuda:
+            torch.cuda.current_stream().synchronize()
+
+        return bool(
+            sim.update_gaussian_avatar_pose(
+                self.avatar_id, int(self._joint_mats_gpu.data_ptr())
+            )
+        )
+
     def update(self, sim=None) -> bool:
         if sim is None:
             sim = self.sim
@@ -1095,25 +1333,11 @@ class GaussianAvatar:
                 raise RuntimeError(
                     "GaussianAvatar strict mode requires precomputed joint_mats."
                 )
+            if self.traj_pos is None and self._np_joint_mats is not None:
+                return self._update_fast(sim, frame_pos)
             joint_mats = self._sample_precomputed_joint_mats(frame_pos)
             proxy_capsules = self._sample_precomputed_proxy_capsules(frame_pos)
-            if (
-                self.precomputed_joint_count > 0
-                and joint_mats.shape[0] != self.precomputed_joint_count
-            ):
-                raise RuntimeError(
-                    "Precomputed joint_mats joint count mismatch: "
-                    f"{joint_mats.shape[0]} vs {self.precomputed_joint_count}."
-                )
-            if self.joint_count is not None and joint_mats.shape[0] != self.joint_count:
-                if not self._joint_count_warned:
-                    logger.warning(
-                        "GaussianAvatar %s joint count mismatch: expected %d, got %d.",
-                        self.name,
-                        self.joint_count,
-                        joint_mats.shape[0],
-                    )
-                    self._joint_count_warned = True
+            self._check_joint_count(joint_mats.shape[0])
 
             if self.scale != 1.0:
                 root_t = joint_mats[0, :3, 3].clone()
